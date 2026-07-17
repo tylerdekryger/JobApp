@@ -69,6 +69,9 @@ class Job(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_content_change_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     status: Mapped[str] = mapped_column(String(20), default="active")
+    # Set when a previously-closed job reappears on a source's board. first_seen_at is preserved
+    # as the ORIGINAL discovery date so the UI can show both "first seen" and "reposted".
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64))
     # LLM-scored fit/gap against the current user resume; cleared when the resume changes.
     fit_summary: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -82,6 +82,7 @@ class JobResponse(BaseModel):
     first_seen_at: datetime
     last_seen_at: datetime
     last_content_change_at: datetime
+    reopened_at: datetime | None = None
     status: str
     fit_summary: str | None = None
     gap_summary: str | None = None

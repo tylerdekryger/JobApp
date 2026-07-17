@@ -5,10 +5,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import companies, discover, jobs, profile, sources
 from app.logging import configure_logging
+from app.scheduling.scheduler import start_scheduler, stop_scheduler
 
 configure_logging()
 
 app = FastAPI(title="Job Intelligence Platform API")
+
+
+@app.on_event("startup")
+def _on_startup() -> None:
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def _on_shutdown() -> None:
+    stop_scheduler()
 
 # Local-dev CORS: default to any localhost port; override via CORS_ORIGINS (comma-separated) in production.
 _env_origins = os.getenv("CORS_ORIGINS", "").strip()

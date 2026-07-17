@@ -103,6 +103,7 @@ def _job_to_response(job: Job, *, current_resume_hash: str = "") -> JobResponse:
         first_seen_at=job.first_seen_at,
         last_seen_at=job.last_seen_at,
         last_content_change_at=job.last_content_change_at,
+        reopened_at=job.reopened_at,
         status=job.status,
         fit_summary=job.fit_summary,
         gap_summary=job.gap_summary,
@@ -149,7 +150,18 @@ def list_jobs(
         count_stmt = count_stmt.where(condition)
 
     total = db.scalar(count_stmt) or 0
-    jobs = db.scalars(stmt.order_by(Job.first_seen_at.desc()).limit(limit).offset(offset)).unique().all()
+    # Reposted jobs float to the top of their "seen" batch; otherwise sort by when we discovered
+    # the job, tiebroken by the posting's own posted_at so a first-sync batch reads chronologically.
+    latest_seen = func.coalesce(Job.reopened_at, Job.first_seen_at)
+    jobs = (
+        db.scalars(
+            stmt.order_by(latest_seen.desc(), Job.posted_at.desc().nulls_last())
+            .limit(limit)
+            .offset(offset)
+        )
+        .unique()
+        .all()
+    )
 
     resume_hash = get_or_create_profile(db).resume_hash
     return JobListResponse(

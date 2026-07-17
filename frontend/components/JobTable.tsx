@@ -17,6 +17,26 @@ function toSnippet(html: string, max = 220): string {
   return stripped.length > max ? stripped.slice(0, max).trimEnd() + "…" : stripped;
 }
 
+function relativeShort(iso: string | null): string {
+  if (!iso) return "—";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
+function isoToShort(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 type AnalysisState =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -80,13 +100,15 @@ export function JobTable({ jobs }: Props) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr style={{ background: "var(--bg)" }}>
+              <Th>Added</Th>
+              <Th>Posted</Th>
               <Th>Company</Th>
               <Th>Role</Th>
               <Th>Location</Th>
               <Th>Link</Th>
-              <Th className="min-w-[240px]">Overview</Th>
-              <Th className="min-w-[240px]">Fit</Th>
-              <Th className="min-w-[240px]">Gaps</Th>
+              <Th className="min-w-[220px]">Overview</Th>
+              <Th className="min-w-[220px]">Fit</Th>
+              <Th className="min-w-[220px]">Gaps</Th>
             </tr>
           </thead>
           <tbody>
@@ -107,6 +129,21 @@ export function JobTable({ jobs }: Props) {
                   className="align-top"
                   style={{ borderTop: "1px solid var(--border)" }}
                 >
+                  <Td className="whitespace-nowrap text-xs">
+                    <div>{relativeShort(job.reopened_at ?? job.first_seen_at)}</div>
+                    {job.reopened_at && (
+                      <div
+                        className="mt-1 inline-block text-[10px] font-medium rounded px-1.5 py-0.5"
+                        style={{ background: "#eab30822", color: "#a16207", border: "1px solid #eab30855" }}
+                        title={`Originally first seen ${new Date(job.first_seen_at).toLocaleDateString()}`}
+                      >
+                        Reposted · orig {isoToShort(job.first_seen_at)}
+                      </div>
+                    )}
+                  </Td>
+                  <Td className="whitespace-nowrap text-xs" style={{ color: "var(--muted)" }}>
+                    {relativeShort(job.posted_at)}
+                  </Td>
                   <Td className="whitespace-nowrap">{job.company_name ?? "—"}</Td>
                   <Td className="min-w-[220px]">
                     <Link href={`/jobs/${job.id}`} className="font-medium hover:underline">

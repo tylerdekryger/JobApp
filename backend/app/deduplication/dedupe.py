@@ -56,6 +56,10 @@ def upsert_job(
         session.add(job)
         return job, UpsertOutcome.ADDED
 
+    # Detect a repost: the row was previously closed and is now back on the board. Preserve the
+    # ORIGINAL first_seen_at (never overwritten) and stamp reopened_at so the UI can flag it.
+    if existing.status == "closed":
+        existing.reopened_at = now
     existing.last_seen_at = now
     existing.status = "active"
 

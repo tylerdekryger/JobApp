@@ -21,6 +21,7 @@ export interface Job {
   first_seen_at: string;
   last_seen_at: string;
   last_content_change_at: string;
+  reopened_at: string | null;
   status: string;
   fit_summary: string | null;
   gap_summary: string | null;
