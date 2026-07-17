@@ -5,13 +5,13 @@ Runs two recurring jobs so the app stays fresh without any user action:
 - ``auto_sync_all_sources``  — re-syncs every registered JobSource on a short cadence
   (default 60 minutes) so newly-posted jobs at existing companies surface quickly.
 - ``auto_discover_new_boards`` — runs a rotating natural-language query against Claude
-  web search once per interval (default 24 h) to find brand-new Greenhouse boards and
-  auto-add + auto-sync any that pass validation. Requires ``ANTHROPIC_API_KEY``; skipped
+  web search to find brand-new Greenhouse boards and auto-add + auto-sync any that pass
+  validation. Fires on a business-hours cron: Monday–Friday, 08:00–18:00 America/New_York,
+  every 2 hours (6 runs/day, 30 runs/week). Requires ``ANTHROPIC_API_KEY``; skipped
   silently otherwise.
 
-Both cadences are configurable via env vars and each job runs *sequentially* to avoid
-hammering Greenhouse or the Anthropic API. The scheduler starts on FastAPI's startup
-event and stops on shutdown.
+Each job runs sequentially with ``max_instances=1`` to avoid hammering Greenhouse or the
+Anthropic API. The scheduler starts on FastAPI's startup event and stops on shutdown.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ import logging
 import os
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from app.db import SessionLocal
 from app.domain.models import JobSource
@@ -71,7 +72,6 @@ def start_scheduler() -> None:
         return
 
     sync_minutes = _int_env("AUTO_SYNC_INTERVAL_MINUTES", 60)
-    discover_hours = _int_env("AUTO_DISCOVER_INTERVAL_HOURS", 24)
     disabled = os.getenv("DISABLE_SCHEDULER", "").strip().lower() in {"1", "true", "yes"}
 
     if disabled:
@@ -87,19 +87,27 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+    # Business-hours cron for discovery: Mon-Fri, 08:00-18:00 ET, every 2 hours.
+    # Fires at 8, 10, 12, 14, 16, 18 local time. Uses America/New_York so it tracks
+    # EDT/EST transitions automatically.
+    discover_trigger = CronTrigger(
+        day_of_week="mon-fri",
+        hour="8-18/2",
+        minute=0,
+        timezone="America/New_York",
+    )
     _scheduler.add_job(
         run_auto_discover,
-        "interval",
-        hours=discover_hours,
+        discover_trigger,
         id="auto_discover",
         max_instances=1,
         coalesce=True,
     )
-    _scheduler.start()
     logger.info(
-        "scheduler started — auto-sync every %d min, auto-discover every %d h",
-        sync_minutes, discover_hours,
+        "scheduler started — auto-sync every %d min; auto-discover Mon-Fri 08:00-18:00 ET / 2h",
+        sync_minutes,
     )
+    _scheduler.start()
 
 
 def stop_scheduler() -> None:

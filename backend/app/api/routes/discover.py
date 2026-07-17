@@ -124,6 +124,30 @@ def extract(payload: ExtractRequest, db: Session = Depends(get_db)) -> DiscoverR
     return _validate_and_shape(tokens, _existing_tokens(db))
 
 
+class RunNowResponse(BaseModel):
+    triggered: bool
+    detail: str
+
+
+@router.post("/run-now", response_model=RunNowResponse)
+def run_auto_discover_now() -> RunNowResponse:
+    """Trigger the scheduled auto-discover task on demand.
+
+    Runs synchronously in the request so the user gets confirmation, and reads its own
+    ANTHROPIC_API_KEY / rotating query state via the same code path the scheduler uses.
+    Server logs show the discovered boards; a fuller "recent discoveries" log is TODO.
+    """
+    from app.scheduling.discover_task import run_auto_discover
+
+    if not os.getenv("ANTHROPIC_API_KEY", "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="ANTHROPIC_API_KEY is not set. Set it to enable auto-discover.",
+        )
+    run_auto_discover()
+    return RunNowResponse(triggered=True, detail="Auto-discover finished; check server logs.")
+
+
 @router.post("/search", response_model=DiscoverResponse)
 def search(payload: SearchRequest, db: Session = Depends(get_db)) -> DiscoverResponse:
     """Find Greenhouse boards matching a query using Anthropic's web-search tool.
