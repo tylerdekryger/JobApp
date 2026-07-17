@@ -15,6 +15,7 @@ No other providers, no matching, no application tracking yet.
 
 ```bash
 cp .env.example .env
+# Optional: set ANTHROPIC_API_KEY in .env to enable per-row fit/gap analysis
 docker compose up -d postgres redis
 ```
 
