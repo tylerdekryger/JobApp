@@ -16,12 +16,24 @@ function relativeTime(iso: string): string {
   return `${months} month${months === 1 ? "" : "s"} ago`;
 }
 
+function toSnippet(html: string, maxChars = 220): string {
+  const decoded = html
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+  const stripped = decoded.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (stripped.length <= maxChars) return stripped;
+  return stripped.slice(0, maxChars).trimEnd() + "…";
+}
+
 export function JobCard({ job }: { job: Job }) {
+  const snippet = job.description ? toSnippet(job.description) : "";
   return (
     <Link href={`/jobs/${job.id}`} className="block">
-      <article
-        className="card p-5 transition-transform hover:-translate-y-0.5 hover:shadow-md"
-      >
+      <article className="card p-5 transition-transform hover:-translate-y-0.5 hover:shadow-md">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold truncate">{job.title}</h2>
@@ -37,6 +49,11 @@ export function JobCard({ job }: { job: Job }) {
             First seen {relativeTime(job.first_seen_at)}
           </span>
         </div>
+        {snippet && (
+          <p className="text-sm mt-3 line-clamp-2" style={{ color: "var(--muted)" }}>
+            {snippet}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2 text-sm" style={{ color: "var(--muted)" }}>
           {job.location && (
             <span

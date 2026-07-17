@@ -44,6 +44,7 @@ export interface CompanyListResponse {
 export interface JobSearchParams {
   q?: string;
   location?: string;
+  department?: string;
   company_id?: number;
   posted_since_days?: number;
   limit?: number;
@@ -77,4 +78,85 @@ export async function listCompanies(): Promise<CompanyListResponse> {
   const res = await fetch(`${API_URL}/companies`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to load companies: ${res.status}`);
   return res.json();
+}
+
+export interface FacetValue {
+  value: string;
+  count: number;
+}
+
+export interface FacetsResponse {
+  departments: FacetValue[];
+  locations: FacetValue[];
+  companies: FacetValue[];
+}
+
+export async function getFacets(params: JobSearchParams): Promise<FacetsResponse> {
+  const res = await fetch(`${API_URL}/jobs/facets${buildSearchQuery(params)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load facets: ${res.status}`);
+  return res.json();
+}
+
+export interface SourceSummary {
+  id: number;
+  company_id: number;
+  company_name: string;
+  provider: string;
+  source_url: string;
+  source_identifier: string;
+  status: string;
+  last_successful_sync: string | null;
+  last_attempted_sync: string | null;
+  last_error: string | null;
+  active_job_count: number;
+}
+
+export interface SourceListResponse {
+  items: SourceSummary[];
+  total: number;
+}
+
+export interface SyncResult {
+  source_id: number;
+  jobs_found: number;
+  jobs_added: number;
+  jobs_updated: number;
+  jobs_removed: number;
+  duration_seconds: number;
+}
+
+export async function listSources(): Promise<SourceListResponse> {
+  const res = await fetch(`${API_URL}/sources`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load sources: ${res.status}`);
+  return res.json();
+}
+
+export async function createSource(url: string, companyName?: string): Promise<SourceSummary> {
+  const res = await fetch(`${API_URL}/sources`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url, company_name: companyName || undefined }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to create source: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function syncSource(sourceId: number): Promise<SyncResult> {
+  const res = await fetch(`${API_URL}/sources/${sourceId}/sync`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to sync source: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteSource(sourceId: number): Promise<void> {
+  const res = await fetch(`${API_URL}/sources/${sourceId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to delete source: ${res.status}`);
+  }
 }

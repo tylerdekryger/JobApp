@@ -1,14 +1,48 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db
 from app.domain.models import Company, Job
-from app.domain.schemas import JobListResponse, JobResponse
+from app.domain.schemas import FacetsResponse, FacetValue, JobListResponse, JobResponse
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@dataclass
+class JobFilters:
+    q: str | None
+    location: str | None
+    department: str | None
+    company_id: int | None
+    source_id: int | None
+    status: str | None
+    posted_since_days: int | None
+
+    def build_conditions(self) -> list[ColumnElement[bool]]:
+        conditions: list[ColumnElement[bool]] = []
+        if self.company_id is not None:
+            conditions.append(Job.company_id == self.company_id)
+        if self.source_id is not None:
+            conditions.append(Job.job_source_id == self.source_id)
+        if self.status is not None:
+            conditions.append(Job.status == self.status)
+        if self.location is not None:
+            conditions.append(Job.location.ilike(f"%{self.location}%"))
+        if self.department is not None:
+            conditions.append(Job.department == self.department)
+        if self.posted_since_days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
+            conditions.append(Job.first_seen_at >= cutoff)
+        if self.q:
+            pattern = f"%{self.q}%"
+            conditions.append(
+                or_(Job.title.ilike(pattern), Job.description.ilike(pattern), Company.name.ilike(pattern))
+            )
+        return conditions
 
 
 def _job_to_response(job: Job) -> JobResponse:
@@ -40,6 +74,7 @@ def _job_to_response(job: Job) -> JobResponse:
 def list_jobs(
     q: str | None = Query(default=None, description="Keyword search over title, description, company name"),
     location: str | None = Query(default=None, description="Substring match against the job location"),
+    department: str | None = Query(default=None, description="Exact match on department"),
     company_id: int | None = None,
     source_id: int | None = None,
     status: str | None = "active",
@@ -53,25 +88,11 @@ def list_jobs(
     stmt = select(Job).join(Company, Company.id == Job.company_id).options(joinedload(Job.company))
     count_stmt = select(func.count()).select_from(Job).join(Company, Company.id == Job.company_id)
 
-    conditions = []
-    if company_id is not None:
-        conditions.append(Job.company_id == company_id)
-    if source_id is not None:
-        conditions.append(Job.job_source_id == source_id)
-    if status is not None:
-        conditions.append(Job.status == status)
-    if location is not None:
-        conditions.append(Job.location.ilike(f"%{location}%"))
-    if posted_since_days is not None:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=posted_since_days)
-        conditions.append(Job.first_seen_at >= cutoff)
-    if q:
-        pattern = f"%{q}%"
-        conditions.append(
-            or_(Job.title.ilike(pattern), Job.description.ilike(pattern), Company.name.ilike(pattern))
-        )
-
-    for condition in conditions:
+    filters = JobFilters(
+        q=q, location=location, department=department, company_id=company_id,
+        source_id=source_id, status=status, posted_since_days=posted_since_days,
+    )
+    for condition in filters.build_conditions():
         stmt = stmt.where(condition)
         count_stmt = count_stmt.where(condition)
 
@@ -83,6 +104,44 @@ def list_jobs(
         limit=limit,
         offset=offset,
         total=total,
+    )
+
+
+@router.get("/facets", response_model=FacetsResponse)
+def get_facets(
+    q: str | None = None,
+    location: str | None = None,
+    department: str | None = None,
+    company_id: int | None = None,
+    source_id: int | None = None,
+    status: str | None = "active",
+    posted_since_days: int | None = Query(default=None, gt=0, le=365),
+    limit: int = Query(default=15, le=50, gt=0),
+    db: Session = Depends(get_db),
+) -> FacetsResponse:
+    filters = JobFilters(
+        q=q, location=location, department=department, company_id=company_id,
+        source_id=source_id, status=status, posted_since_days=posted_since_days,
+    )
+
+    def top_values(column: ColumnElement[str]) -> list[FacetValue]:
+        stmt = (
+            select(column.label("value"), func.count(Job.id).label("count"))
+            .select_from(Job)
+            .join(Company, Company.id == Job.company_id)
+            .where(column.is_not(None))
+            .group_by(column)
+            .order_by(func.count(Job.id).desc())
+            .limit(limit)
+        )
+        for cond in filters.build_conditions():
+            stmt = stmt.where(cond)
+        return [FacetValue(value=row.value, count=row.count) for row in db.execute(stmt).all()]
+
+    return FacetsResponse(
+        departments=top_values(Job.department),
+        locations=top_values(Job.location),
+        companies=top_values(Company.name),
     )
 
 

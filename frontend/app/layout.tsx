@@ -12,12 +12,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen">
         <header className="border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
-          <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
+          <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
             <Link href="/" className="font-semibold text-lg tracking-tight">
               Job Intelligence
             </Link>
-            <nav className="text-sm" style={{ color: "var(--muted)" }}>
-              <span className="hidden sm:inline">Search jobs across company career pages</span>
+            <nav className="flex items-center gap-5 text-sm">
+              <Link href="/" className="hover:underline">
+                Search
+              </Link>
+              <Link href="/sources" className="hover:underline">
+                Sources
+              </Link>
             </nav>
           </div>
         </header>

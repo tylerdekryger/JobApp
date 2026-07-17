@@ -26,15 +26,20 @@ export function SearchControls({ companies }: Props) {
   }, [params]);
 
   function applyFilters(overrides: Record<string, string> = {}) {
-    const usp = new URLSearchParams();
+    // Preserve params we don't manage here (e.g. `department` set via facet click).
+    const usp = new URLSearchParams(params.toString());
+    const managed = ["q", "location", "company_id", "posted_since_days"];
     const set = (key: string, value: string) => {
       const v = overrides[key] !== undefined ? overrides[key] : value;
       if (v) usp.set(key, v);
+      else usp.delete(key);
     };
-    set("q", q);
-    set("location", location);
-    set("company_id", companyId);
-    set("posted_since_days", postedSince);
+    for (const key of managed) {
+      const value = { q, location, company_id: companyId, posted_since_days: postedSince }[
+        key as keyof { q: string; location: string; company_id: string; posted_since_days: string }
+      ];
+      set(key, value);
+    }
     const query = usp.toString();
     router.push(query ? `/?${query}` : "/");
   }

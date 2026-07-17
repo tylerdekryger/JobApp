@@ -29,6 +29,36 @@ class SyncTriggerResponse(BaseModel):
     status: str
 
 
+class SyncResultResponse(BaseModel):
+    source_id: int
+    jobs_found: int
+    jobs_added: int
+    jobs_updated: int
+    jobs_removed: int
+    duration_seconds: float
+
+
+class SourceSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    company_id: int
+    company_name: str
+    provider: str
+    source_url: str
+    source_identifier: str
+    status: str
+    last_successful_sync: datetime | None
+    last_attempted_sync: datetime | None
+    last_error: str | None
+    active_job_count: int
+
+
+class SourceListResponse(BaseModel):
+    items: list[SourceSummary]
+    total: int
+
+
 class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,3 +102,14 @@ class CompanySummary(BaseModel):
 class CompanyListResponse(BaseModel):
     items: list[CompanySummary]
     total: int
+
+
+class FacetValue(BaseModel):
+    value: str
+    count: int
+
+
+class FacetsResponse(BaseModel):
+    departments: list[FacetValue]
+    locations: list[FacetValue]
+    companies: list[FacetValue]
