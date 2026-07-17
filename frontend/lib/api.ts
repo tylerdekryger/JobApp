@@ -202,6 +202,46 @@ export async function analyzeJob(jobId: number): Promise<AnalyzeJobResponse> {
   return res.json();
 }
 
+export interface DiscoverCandidate {
+  token: string;
+  company_name: string;
+  source_url: string;
+  job_count: number;
+  already_registered: boolean;
+}
+
+export interface DiscoverResponse {
+  candidates: DiscoverCandidate[];
+  total_tokens_seen: number;
+  filtered_out: number;
+}
+
+export async function extractCandidates(text: string): Promise<DiscoverResponse> {
+  const res = await fetch(`${API_URL}/discover/extract`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to extract: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function searchCandidates(query: string): Promise<DiscoverResponse> {
+  const res = await fetch(`${API_URL}/discover/search`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to search: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteSource(sourceId: number): Promise<void> {
   const res = await fetch(`${API_URL}/sources/${sourceId}`, { method: "DELETE" });
   if (!res.ok) {

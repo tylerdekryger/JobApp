@@ -11,6 +11,7 @@ import {
   type SourceSummary,
   type SyncResult,
 } from "@/lib/api";
+import { DiscoverSection } from "@/components/DiscoverSection";
 
 function formatDateTime(iso: string | null): string {
   if (!iso) return "never";
@@ -248,6 +249,8 @@ export default function SourcesPage() {
           Currently supports Greenhouse boards (<code>boards.greenhouse.io/&lt;token&gt;</code>).
         </p>
       </form>
+
+      <DiscoverSection onSourcesChanged={refresh} />
 
       <details className="card p-4" open={bulk !== null}>
         <summary className="cursor-pointer text-sm font-medium">
