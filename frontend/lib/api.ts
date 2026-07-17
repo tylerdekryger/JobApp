@@ -22,6 +22,10 @@ export interface Job {
   last_seen_at: string;
   last_content_change_at: string;
   status: string;
+  fit_summary: string | null;
+  gap_summary: string | null;
+  analyzed_at: string | null;
+  analysis_is_stale: boolean;
 }
 
 export interface JobListResponse {
@@ -47,6 +51,7 @@ export interface JobSearchParams {
   location?: string;
   department?: string;
   remote_type?: string;
+  title_contains?: string;
   company_id?: number;
   posted_since_days?: number;
   limit?: number;
@@ -152,6 +157,47 @@ export async function syncSource(sourceId: number): Promise<SyncResult> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Failed to sync source: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface Profile {
+  resume_text: string;
+  resume_hash: string;
+  updated_at: string | null;
+}
+
+export async function getProfile(): Promise<Profile> {
+  const res = await fetch(`${API_URL}/profile`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load profile: ${res.status}`);
+  return res.json();
+}
+
+export async function updateProfile(resumeText: string): Promise<Profile> {
+  const res = await fetch(`${API_URL}/profile`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resume_text: resumeText }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to save profile: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface AnalyzeJobResponse {
+  job_id: number;
+  fit_summary: string;
+  gap_summary: string;
+  analyzed_at: string;
+}
+
+export async function analyzeJob(jobId: number): Promise<AnalyzeJobResponse> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/analyze`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to analyze job: ${res.status}`);
   }
   return res.json();
 }

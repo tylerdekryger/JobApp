@@ -83,6 +83,10 @@ class JobResponse(BaseModel):
     last_seen_at: datetime
     last_content_change_at: datetime
     status: str
+    fit_summary: str | None = None
+    gap_summary: str | None = None
+    analyzed_at: datetime | None = None
+    analysis_is_stale: bool = False  # true when a newer resume version invalidates cached summary
 
 
 class JobListResponse(BaseModel):
@@ -115,3 +119,20 @@ class FacetsResponse(BaseModel):
     locations: list[FacetValue]
     companies: list[FacetValue]
     remote_types: list[FacetValue]
+
+
+class ProfileResponse(BaseModel):
+    resume_text: str
+    resume_hash: str
+    updated_at: datetime | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    resume_text: str
+
+
+class AnalyzeJobResponse(BaseModel):
+    job_id: int
+    fit_summary: str
+    gap_summary: str
+    analyzed_at: datetime

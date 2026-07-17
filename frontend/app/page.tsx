@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { FacetPanel } from "@/components/FacetPanel";
-import { JobCard } from "@/components/JobCard";
+import { JobTable } from "@/components/JobTable";
 import { RemoteStatsBar } from "@/components/RemoteStatsBar";
 import { SearchControls } from "@/components/SearchControls";
 import { getFacets, listCompanies, searchJobs } from "@/lib/api";
@@ -57,6 +57,7 @@ export default async function HomePage({ searchParams }: PageProps) {
     location: pickString(sp.location),
     department: pickString(sp.department),
     remote_type: pickString(sp.remote_type),
+    title_contains: pickString(sp.title_contains),
     company_id: pickNumber(sp.company_id),
     posted_since_days: pickNumber(sp.posted_since_days),
     limit: 25,
@@ -134,6 +135,12 @@ export default async function HomePage({ searchParams }: PageProps) {
                     removeHref={buildRemoveHref(sp, "location")}
                   />
                 )}
+                {params.title_contains && (
+                  <ActiveFilterChip
+                    label={`Role: ${params.title_contains}`}
+                    removeHref={buildRemoveHref(sp, "title_contains")}
+                  />
+                )}
                 {activeCompanyName && (
                   <ActiveFilterChip
                     label={`Company: ${activeCompanyName}`}
@@ -151,11 +158,7 @@ export default async function HomePage({ searchParams }: PageProps) {
                 .
               </div>
             ) : (
-              <div className="grid gap-3">
-                {jobs.items.map((job) => (
-                  <JobCard key={job.id} job={job} />
-                ))}
-              </div>
+              <JobTable jobs={jobs.items} />
             )}
           </div>
         </div>

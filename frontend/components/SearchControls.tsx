@@ -17,6 +17,7 @@ export function SearchControls({ companies }: Props) {
   const [location, setLocation] = useState(params.get("location") ?? "");
   const [companyId, setCompanyId] = useState(params.get("company_id") ?? "");
   const [postedSince, setPostedSince] = useState(params.get("posted_since_days") ?? "");
+  const [titleContains, setTitleContains] = useState(params.get("title_contains") ?? "");
   // "Remote (include unknown)": true when the filter is anything that includes 'remote'
   const remoteParam = params.get("remote_type") ?? "";
   const [remoteEligible, setRemoteEligible] = useState(remoteParam.split(",").includes("remote"));
@@ -26,6 +27,7 @@ export function SearchControls({ companies }: Props) {
     setLocation(params.get("location") ?? "");
     setCompanyId(params.get("company_id") ?? "");
     setPostedSince(params.get("posted_since_days") ?? "");
+    setTitleContains(params.get("title_contains") ?? "");
     const r = params.get("remote_type") ?? "";
     setRemoteEligible(r.split(",").includes("remote"));
   }, [params]);
@@ -42,6 +44,7 @@ export function SearchControls({ companies }: Props) {
     set("location", location);
     set("company_id", companyId);
     set("posted_since_days", postedSince);
+    set("title_contains", titleContains);
     // Preserve any explicit remote_type set via the facet panel (e.g. "onsite" alone).
     // Only overwrite it if the user directly toggled the "Remote (include unknown)" checkbox.
     if (overrides["remote_type"] !== undefined) {
@@ -61,6 +64,7 @@ export function SearchControls({ companies }: Props) {
     setLocation("");
     setCompanyId("");
     setPostedSince("");
+    setTitleContains("");
     setRemoteEligible(false);
     router.push("/");
   }
@@ -83,6 +87,21 @@ export function SearchControls({ companies }: Props) {
         >
           Search
         </button>
+      </div>
+      <div>
+        <label className="flex flex-col text-sm">
+          <span className="mb-1 font-medium" style={{ color: "var(--muted)" }}>
+            Role keywords <span className="font-normal">(comma-separated — title must contain ALL)</span>
+          </span>
+          <input
+            type="text"
+            value={titleContains}
+            onChange={(e) => setTitleContains(e.target.value)}
+            placeholder='e.g. Manager, Customer Success'
+            className="rounded-lg border px-3 py-2 bg-transparent"
+            style={{ borderColor: "var(--border)" }}
+          />
+        </label>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <label className="flex flex-col text-sm">

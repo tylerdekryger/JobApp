@@ -23,10 +23,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/sources" className="hover:underline">
                 Sources
               </Link>
+              <Link href="/profile" className="hover:underline">
+                Profile
+              </Link>
             </nav>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+        <main className="mx-auto max-w-7xl px-6 py-8">{children}</main>
       </body>
     </html>
   );

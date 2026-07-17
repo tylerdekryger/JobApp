@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from app.analysis.fit import AnalysisConfigError, analyze_job_against_resume
 from app.api.deps import get_db
+from app.api.routes.profile import get_or_create_profile
 from app.domain.models import Company, Job
-from app.domain.schemas import FacetsResponse, FacetValue, JobListResponse, JobResponse
+from app.domain.schemas import AnalyzeJobResponse, FacetsResponse, FacetValue, JobListResponse, JobResponse
 from app.normalization.text import strip_boilerplate
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -19,6 +21,7 @@ class JobFilters:
     location: str | None
     department: str | None
     remote_type: str | None  # comma-separated: "remote" or "remote,unknown" or "remote,unknown,hybrid"
+    title_contains: str | None  # comma-separated terms; ALL must appear in the title (AND)
     company_id: int | None
     source_id: int | None
     status: str | None
@@ -28,6 +31,11 @@ class JobFilters:
         if not self.remote_type:
             return []
         return [v.strip() for v in self.remote_type.split(",") if v.strip()]
+
+    def _title_terms(self) -> list[str]:
+        if not self.title_contains:
+            return []
+        return [t.strip() for t in self.title_contains.split(",") if t.strip()]
 
     def build_conditions(self) -> list[ColumnElement[bool]]:
         conditions: list[ColumnElement[bool]] = []
@@ -52,6 +60,8 @@ class JobFilters:
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
+        for term in self._title_terms():
+            conditions.append(Job.title.ilike(f"%{term}%"))
         if self.q:
             pattern = f"%{self.q}%"
             conditions.append(
@@ -60,8 +70,15 @@ class JobFilters:
         return conditions
 
 
-def _job_to_response(job: Job) -> JobResponse:
+def _job_to_response(job: Job, *, current_resume_hash: str = "") -> JobResponse:
     boilerplate = job.job_source.description_boilerplate_prefix if job.job_source else None
+    # Cached analysis is stale if the resume changed since it was computed.
+    stale = bool(
+        job.fit_summary
+        and current_resume_hash
+        and job.analysis_resume_hash
+        and job.analysis_resume_hash != current_resume_hash
+    )
     return JobResponse(
         id=job.id,
         company_id=job.company_id,
@@ -84,6 +101,10 @@ def _job_to_response(job: Job) -> JobResponse:
         last_seen_at=job.last_seen_at,
         last_content_change_at=job.last_content_change_at,
         status=job.status,
+        fit_summary=job.fit_summary,
+        gap_summary=job.gap_summary,
+        analyzed_at=job.analyzed_at,
+        analysis_is_stale=stale,
     )
 
 
@@ -93,6 +114,10 @@ def list_jobs(
     location: str | None = Query(default=None, description="Substring match against the job location"),
     department: str | None = Query(default=None, description="Exact match on department"),
     remote_type: str | None = Query(default=None, description="Filter by remote/hybrid/onsite/unknown"),
+    title_contains: str | None = Query(
+        default=None,
+        description="Comma-separated terms; ALL must appear in the title (case-insensitive).",
+    ),
     company_id: int | None = None,
     source_id: int | None = None,
     status: str | None = "active",
@@ -112,6 +137,7 @@ def list_jobs(
 
     filters = JobFilters(
         q=q, location=location, department=department, remote_type=remote_type,
+        title_contains=title_contains,
         company_id=company_id, source_id=source_id, status=status,
         posted_since_days=posted_since_days,
     )
@@ -122,8 +148,9 @@ def list_jobs(
     total = db.scalar(count_stmt) or 0
     jobs = db.scalars(stmt.order_by(Job.first_seen_at.desc()).limit(limit).offset(offset)).unique().all()
 
+    resume_hash = get_or_create_profile(db).resume_hash
     return JobListResponse(
-        items=[_job_to_response(job) for job in jobs],
+        items=[_job_to_response(job, current_resume_hash=resume_hash) for job in jobs],
         limit=limit,
         offset=offset,
         total=total,
@@ -145,6 +172,7 @@ def get_facets(
 ) -> FacetsResponse:
     filters = JobFilters(
         q=q, location=location, department=department, remote_type=remote_type,
+        title_contains=None,
         company_id=company_id, source_id=source_id, status=status,
         posted_since_days=posted_since_days,
     )
@@ -169,6 +197,7 @@ def get_facets(
     # user always sees the full breakdown and can toggle between them.
     remote_filters = JobFilters(
         q=q, location=location, department=department, remote_type=None,
+        title_contains=None,
         company_id=company_id, source_id=source_id, status=status,
         posted_since_days=posted_since_days,
     )
@@ -201,4 +230,57 @@ def get_job(job_id: int, db: Session = Depends(get_db)) -> JobResponse:
     )
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    return _job_to_response(job)
+    resume_hash = get_or_create_profile(db).resume_hash
+    return _job_to_response(job, current_resume_hash=resume_hash)
+
+
+@router.post("/{job_id}/analyze", response_model=AnalyzeJobResponse)
+def analyze_job(job_id: int, db: Session = Depends(get_db)) -> AnalyzeJobResponse:
+    job = db.scalar(
+        select(Job)
+        .options(joinedload(Job.company), joinedload(Job.job_source))
+        .where(Job.id == job_id)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    profile = get_or_create_profile(db)
+
+    # Reuse cache if the resume hasn't changed since last analysis.
+    if (
+        job.fit_summary
+        and job.gap_summary
+        and profile.resume_hash
+        and job.analysis_resume_hash == profile.resume_hash
+        and job.analyzed_at is not None
+    ):
+        return AnalyzeJobResponse(
+            job_id=job.id,
+            fit_summary=job.fit_summary,
+            gap_summary=job.gap_summary,
+            analyzed_at=job.analyzed_at,
+        )
+
+    try:
+        result = analyze_job_against_resume(
+            resume_text=profile.resume_text,
+            job_title=job.title,
+            company_name=job.company.name if job.company else "the company",
+            job_location=job.location,
+            job_description_html=job.description,
+        )
+    except AnalysisConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    job.fit_summary = result.fit
+    job.gap_summary = result.gaps
+    job.analysis_resume_hash = profile.resume_hash
+    job.analyzed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return AnalyzeJobResponse(
+        job_id=job.id,
+        fit_summary=job.fit_summary,
+        gap_summary=job.gap_summary,
+        analyzed_at=job.analyzed_at,
+    )

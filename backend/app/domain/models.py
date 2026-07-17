@@ -70,6 +70,11 @@ class Job(Base):
     last_content_change_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     status: Mapped[str] = mapped_column(String(20), default="active")
     content_hash: Mapped[str] = mapped_column(String(64))
+    # LLM-scored fit/gap against the current user resume; cleared when the resume changes.
+    fit_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gap_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_resume_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -77,3 +82,17 @@ class Job(Base):
 
     company: Mapped["Company"] = relationship(back_populates="jobs")
     job_source: Mapped["JobSource"] = relationship(back_populates="jobs")
+
+
+class UserProfile(Base):
+    """Single-row settings table (id=1) for the local user's resume."""
+
+    __tablename__ = "user_profile"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resume_text: Mapped[str] = mapped_column(Text, default="")
+    resume_hash: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
