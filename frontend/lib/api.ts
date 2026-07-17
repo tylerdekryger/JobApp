@@ -91,6 +91,7 @@ export interface FacetsResponse {
   departments: FacetValue[];
   locations: FacetValue[];
   companies: FacetValue[];
+  remote_types: FacetValue[];
 }
 
 export async function getFacets(params: JobSearchParams): Promise<FacetsResponse> {

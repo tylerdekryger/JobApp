@@ -17,14 +17,17 @@ export function SearchControls({ companies }: Props) {
   const [location, setLocation] = useState(params.get("location") ?? "");
   const [companyId, setCompanyId] = useState(params.get("company_id") ?? "");
   const [postedSince, setPostedSince] = useState(params.get("posted_since_days") ?? "");
-  const [remoteOnly, setRemoteOnly] = useState(params.get("remote_type") === "remote");
+  // "Remote (include unknown)": true when the filter is anything that includes 'remote'
+  const remoteParam = params.get("remote_type") ?? "";
+  const [remoteEligible, setRemoteEligible] = useState(remoteParam.split(",").includes("remote"));
 
   useEffect(() => {
     setQ(params.get("q") ?? "");
     setLocation(params.get("location") ?? "");
     setCompanyId(params.get("company_id") ?? "");
     setPostedSince(params.get("posted_since_days") ?? "");
-    setRemoteOnly(params.get("remote_type") === "remote");
+    const r = params.get("remote_type") ?? "";
+    setRemoteEligible(r.split(",").includes("remote"));
   }, [params]);
 
   function applyFilters(overrides: Record<string, string> = {}) {
@@ -39,7 +42,11 @@ export function SearchControls({ companies }: Props) {
     set("location", location);
     set("company_id", companyId);
     set("posted_since_days", postedSince);
-    set("remote_type", remoteOnly ? "remote" : "");
+    // Preserve any explicit remote_type set via the facet panel (e.g. "onsite" alone).
+    // Only overwrite it if the user directly toggled the "Remote (include unknown)" checkbox.
+    if (overrides["remote_type"] !== undefined) {
+      set("remote_type", overrides["remote_type"]);
+    }
     const query = usp.toString();
     router.push(query ? `/?${query}` : "/");
   }
@@ -54,7 +61,7 @@ export function SearchControls({ companies }: Props) {
     setLocation("");
     setCompanyId("");
     setPostedSince("");
-    setRemoteOnly(false);
+    setRemoteEligible(false);
     router.push("/");
   }
 
@@ -137,16 +144,16 @@ export function SearchControls({ companies }: Props) {
         <label className="flex items-center gap-2 select-none cursor-pointer">
           <input
             type="checkbox"
-            checked={remoteOnly}
+            checked={remoteEligible}
             onChange={(e) => {
-              setRemoteOnly(e.target.checked);
-              applyFilters({ remote_type: e.target.checked ? "remote" : "" });
+              setRemoteEligible(e.target.checked);
+              applyFilters({ remote_type: e.target.checked ? "remote,unknown" : "" });
             }}
             className="h-4 w-4"
           />
-          <span className="font-medium">Remote only</span>
+          <span className="font-medium">Remote (include unknown)</span>
           <span style={{ color: "var(--muted)" }}>
-            (location says remote OR body confirms it)
+            confirmed remote + jobs where remote status isn&apos;t stated
           </span>
         </label>
         <button

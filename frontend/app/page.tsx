@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import { FacetPanel } from "@/components/FacetPanel";
 import { JobCard } from "@/components/JobCard";
+import { RemoteStatsBar } from "@/components/RemoteStatsBar";
 import { SearchControls } from "@/components/SearchControls";
 import { getFacets, listCompanies, searchJobs } from "@/lib/api";
 import type { JobSearchParams } from "@/lib/api";
@@ -101,10 +102,20 @@ export default async function HomePage({ searchParams }: PageProps) {
               facets={facets}
               activeLocation={params.location ?? null}
               activeCompanyId={params.company_id !== undefined ? String(params.company_id) : null}
+              activeRemoteTypes={(params.remote_type ?? "").split(",").filter(Boolean)}
               companiesById={companiesById}
             />
           </Suspense>
           <div className="space-y-4">
+            <RemoteStatsBar
+              values={facets.remote_types}
+              currentSearchParams={new URLSearchParams(
+                Object.entries(sp).flatMap(([k, v]) => {
+                  const s = pickString(v);
+                  return s ? [[k, s] as [string, string]] : [];
+                }),
+              )}
+            />
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <p className="text-sm" style={{ color: "var(--muted)" }}>
                 {jobs.total.toLocaleString()} job{jobs.total === 1 ? "" : "s"} match

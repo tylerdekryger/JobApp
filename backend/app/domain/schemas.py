@@ -114,3 +114,4 @@ class FacetsResponse(BaseModel):
     departments: list[FacetValue]
     locations: list[FacetValue]
     companies: list[FacetValue]
+    remote_types: list[FacetValue]

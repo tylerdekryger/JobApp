@@ -18,11 +18,16 @@ class JobFilters:
     q: str | None
     location: str | None
     department: str | None
-    remote_type: str | None
+    remote_type: str | None  # comma-separated: "remote" or "remote,unknown" or "remote,unknown,hybrid"
     company_id: int | None
     source_id: int | None
     status: str | None
     posted_since_days: int | None
+
+    def _remote_type_values(self) -> list[str]:
+        if not self.remote_type:
+            return []
+        return [v.strip() for v in self.remote_type.split(",") if v.strip()]
 
     def build_conditions(self) -> list[ColumnElement[bool]]:
         conditions: list[ColumnElement[bool]] = []
@@ -36,8 +41,14 @@ class JobFilters:
             conditions.append(Job.location.ilike(f"%{self.location}%"))
         if self.department is not None:
             conditions.append(Job.department == self.department)
-        if self.remote_type is not None:
-            conditions.append(Job.remote_type == self.remote_type)
+        remote_values = self._remote_type_values()
+        if remote_values:
+            # Treat "unknown" as matching both the literal "unknown" and NULL — some early rows
+            # predate remote-type detection and never got a value written.
+            if "unknown" in remote_values:
+                conditions.append(or_(Job.remote_type.in_(remote_values), Job.remote_type.is_(None)))
+            else:
+                conditions.append(Job.remote_type.in_(remote_values))
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
@@ -138,7 +149,7 @@ def get_facets(
         posted_since_days=posted_since_days,
     )
 
-    def top_values(column: ColumnElement[str]) -> list[FacetValue]:
+    def top_values(column: ColumnElement[str], *, extra_filter=None) -> list[FacetValue]:
         stmt = (
             select(column.label("value"), func.count(Job.id).label("count"))
             .select_from(Job)
@@ -150,12 +161,34 @@ def get_facets(
         )
         for cond in filters.build_conditions():
             stmt = stmt.where(cond)
+        if extra_filter is not None:
+            stmt = stmt.where(extra_filter)
         return [FacetValue(value=row.value, count=row.count) for row in db.execute(stmt).all()]
+
+    # Remote-type facet is a small enumerated set; ignore the current remote_type filter so the
+    # user always sees the full breakdown and can toggle between them.
+    remote_filters = JobFilters(
+        q=q, location=location, department=department, remote_type=None,
+        company_id=company_id, source_id=source_id, status=status,
+        posted_since_days=posted_since_days,
+    )
+    remote_value = func.coalesce(Job.remote_type, "unknown")
+    remote_stmt = (
+        select(remote_value.label("value"), func.count(Job.id).label("count"))
+        .select_from(Job)
+        .join(Company, Company.id == Job.company_id)
+        .group_by(remote_value)
+        .order_by(func.count(Job.id).desc())
+    )
+    for cond in remote_filters.build_conditions():
+        remote_stmt = remote_stmt.where(cond)
+    remote_types = [FacetValue(value=row.value, count=row.count) for row in db.execute(remote_stmt).all()]
 
     return FacetsResponse(
         departments=top_values(Job.department),
         locations=top_values(Job.location),
         companies=top_values(Company.name),
+        remote_types=remote_types,
     )
 
 

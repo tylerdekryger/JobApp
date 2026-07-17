@@ -75,19 +75,34 @@ interface Props {
     departments: FacetValue[];
     locations: FacetValue[];
     companies: FacetValue[];
+    remote_types: FacetValue[];
   };
   activeLocation: string | null;
   activeCompanyId: string | null;
+  activeRemoteTypes: string[];
   companiesById: Record<string, string>;
 }
 
-export function FacetPanel({ facets, activeLocation, activeCompanyId, companiesById }: Props) {
+export function FacetPanel({ facets, activeLocation, activeCompanyId, activeRemoteTypes, companiesById }: Props) {
   // For companies we filter on company_id, so we present them as name → click sets company_id.
   const params = useSearchParams();
   const companyNameToId: Record<string, string> = {};
   for (const [id, name] of Object.entries(companiesById)) {
     companyNameToId[name] = id;
   }
+  const remoteLabels: Record<string, string> = {
+    remote: "Remote",
+    hybrid: "Hybrid",
+    onsite: "Onsite",
+    unknown: "Unknown",
+  };
+  const remoteColors: Record<string, string> = {
+    remote: "#16a34a",
+    hybrid: "#a16207",
+    onsite: "#64748b",
+    unknown: "#94a3b8",
+  };
+
   return (
     <aside className="card p-4 space-y-5 sticky top-4">
       <div>
@@ -96,6 +111,44 @@ export function FacetPanel({ facets, activeLocation, activeCompanyId, companiesB
           Top values in your current results. Click to filter.
         </p>
       </div>
+      {facets.remote_types.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: "var(--muted)" }}>
+            Remote status
+          </h3>
+          <ul className="space-y-1">
+            {facets.remote_types.map((v) => {
+              const isActive = activeRemoteTypes.length === 1 && activeRemoteTypes[0] === v.value;
+              const next = new URLSearchParams(params.toString());
+              if (isActive) next.delete("remote_type");
+              else next.set("remote_type", v.value);
+              const q = next.toString();
+              return (
+                <li key={v.value}>
+                  <Link
+                    href={q ? `/?${q}` : "/"}
+                    className="flex items-center justify-between gap-2 text-sm rounded-md px-2 py-1 -mx-2"
+                    style={{
+                      background: isActive ? "var(--bg)" : "transparent",
+                      border: `1px solid ${isActive ? "var(--accent)" : "transparent"}`,
+                      color: isActive ? "var(--accent)" : "inherit",
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="inline-block h-2 w-2 rounded-full flex-shrink-0"
+                        style={{ background: remoteColors[v.value] ?? "var(--muted)" }}
+                      />
+                      {remoteLabels[v.value] ?? v.value}
+                    </span>
+                    <span className="flex-shrink-0 text-xs" style={{ color: "var(--muted)" }}>{v.count}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
       <FacetSection
         title="Locations"
         values={facets.locations}
