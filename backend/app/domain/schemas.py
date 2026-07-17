@@ -34,6 +34,7 @@ class JobResponse(BaseModel):
 
     id: int
     company_id: int
+    company_name: str | None = None
     job_source_id: int
     external_job_id: str
     canonical_url: str
@@ -57,4 +58,17 @@ class JobListResponse(BaseModel):
     items: list[JobResponse]
     limit: int
     offset: int
+    total: int
+
+
+class CompanySummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    active_job_count: int
+
+
+class CompanyListResponse(BaseModel):
+    items: list[CompanySummary]
     total: int

@@ -2,7 +2,12 @@
 
 Discovers job postings directly from company career infrastructure and ATS platforms, normalizes them into a unified schema, and makes them searchable. See [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md) for the full product spec and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what's actually built so far.
 
-This repo currently implements the first vertical slice: **Greenhouse end-to-end** — source registration, job sync, normalization, deduplication, and a read API. No frontend, no other providers, no matching yet.
+This repo currently implements the first two vertical slices:
+
+1. **Greenhouse end-to-end** — source registration, job sync, normalization, Level-1 deduplication.
+2. **Search UI** (Phase 4) — Next.js frontend with keyword/location/company/freshness search, job cards, and a job detail view backed by an extended `GET /jobs` endpoint.
+
+No other providers, no matching, no application tracking yet.
 
 ## Local development
 
@@ -29,8 +34,9 @@ alembic upgrade head
 docker compose up
 ```
 
-- API: http://localhost:8000 (interactive docs at `/docs`)
-- Worker: consumes the `sync` queue via Redis
+- **Frontend**: http://localhost:3000
+- **API**: http://localhost:8000 (interactive docs at `/docs`)
+- **Worker**: consumes the `sync` queue via Redis
 
 ### 4. Try it
 
@@ -62,6 +68,7 @@ pytest ../tests
 ```
 backend/app/        FastAPI app: domain models, providers, discovery, normalization,
                      deduplication, sync pipeline, API routes
+frontend/            Next.js + TypeScript search UI (App Router)
 workers/             Celery app + tasks (wraps backend/app/sync)
 infrastructure/      Dockerfiles
 tests/               unit + integration tests
