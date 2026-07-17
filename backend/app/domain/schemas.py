@@ -70,6 +70,7 @@ class JobResponse(BaseModel):
     canonical_url: str
     title: str
     description: str
+    description_clean: str  # raw description with per-source boilerplate stripped
     location: str | None
     remote_type: str | None
     employment_type: str | None

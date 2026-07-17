@@ -9,6 +9,7 @@ export interface Job {
   canonical_url: string;
   title: string;
   description: string;
+  description_clean: string;
   location: string | null;
   remote_type: string | null;
   employment_type: string | null;
@@ -45,6 +46,7 @@ export interface JobSearchParams {
   q?: string;
   location?: string;
   department?: string;
+  remote_type?: string;
   company_id?: number;
   posted_since_days?: number;
   limit?: number;

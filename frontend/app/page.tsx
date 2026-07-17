@@ -55,6 +55,7 @@ export default async function HomePage({ searchParams }: PageProps) {
     q: pickString(sp.q),
     location: pickString(sp.location),
     department: pickString(sp.department),
+    remote_type: pickString(sp.remote_type),
     company_id: pickNumber(sp.company_id),
     posted_since_days: pickNumber(sp.posted_since_days),
     limit: 25,

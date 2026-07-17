@@ -8,6 +8,7 @@ from app.deduplication.dedupe import UpsertOutcome, upsert_job
 from app.domain.models import Job, JobSource
 from app.logging import get_logger
 from app.normalization.content_hash import compute_content_hash
+from app.normalization.text import detect_boilerplate_prefix
 from app.providers.registry import get_provider
 
 logger = get_logger(__name__)
@@ -62,6 +63,13 @@ def sync_source(session: Session, source_id: int) -> SyncResult:
             updated += 1
 
     removed = _close_missing_jobs(session, source_id=source.id, seen_external_ids=seen_external_ids)
+
+    # Detect per-source description boilerplate now that we have all active descriptions in hand.
+    # Stored on JobSource and stripped at display time (raw description stays intact on Job).
+    active_descriptions = session.scalars(
+        select(Job.description).where(Job.job_source_id == source.id, Job.status == "active")
+    ).all()
+    source.description_boilerplate_prefix = detect_boilerplate_prefix(list(active_descriptions)) or None
 
     source.last_successful_sync = started_at
     source.last_error = None

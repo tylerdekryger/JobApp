@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from app.normalization.text import clean_department, detect_remote_type
 from app.providers.base import JobProvider, NormalizedJob
 from app.providers.greenhouse.client import GreenhouseClient
 
@@ -52,17 +53,19 @@ class GreenhouseProvider(JobProvider):
 
     def normalize(self, raw_job: dict[str, Any], company_name: str) -> NormalizedJob:
         departments = raw_job.get("departments") or []
-        department = departments[0]["name"] if departments else None
+        raw_department = departments[0]["name"] if departments else None
         location = (raw_job.get("location") or {}).get("name")
+        description = raw_job.get("content") or ""
 
         return NormalizedJob(
             source_provider=self.name,
             source_job_id=str(raw_job["id"]),
             company_name=company_name,
             title=raw_job["title"],
-            description=raw_job.get("content") or "",
+            description=description,
             canonical_url=raw_job["absolute_url"],
             location=location,
-            department=department,
+            remote_type=detect_remote_type(location, description),
+            department=clean_department(raw_department),
             posted_at=_parse_datetime(raw_job.get("first_published") or raw_job.get("updated_at")),
         )

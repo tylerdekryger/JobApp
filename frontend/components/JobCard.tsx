@@ -29,14 +29,37 @@ function toSnippet(html: string, maxChars = 220): string {
   return stripped.slice(0, maxChars).trimEnd() + "…";
 }
 
+function RemoteBadge({ type }: { type: string | null }) {
+  if (!type || type === "unknown") return null;
+  const styles: Record<string, { bg: string; fg: string; border: string; label: string }> = {
+    remote:  { bg: "#16a34a22", fg: "#16a34a", border: "#16a34a55", label: "Remote" },
+    hybrid:  { bg: "#eab30822", fg: "#a16207", border: "#eab30855", label: "Hybrid" },
+    onsite:  { bg: "var(--bg)", fg: "var(--muted)", border: "var(--border)", label: "Onsite" },
+  };
+  const s = styles[type];
+  if (!s) return null;
+  return (
+    <span
+      className="text-xs rounded-full px-2 py-0.5"
+      style={{ background: s.bg, color: s.fg, border: `1px solid ${s.border}` }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
 export function JobCard({ job }: { job: Job }) {
-  const snippet = job.description ? toSnippet(job.description) : "";
+  const snippetSource = job.description_clean || job.description;
+  const snippet = snippetSource ? toSnippet(snippetSource) : "";
   return (
     <Link href={`/jobs/${job.id}`} className="block">
       <article className="card p-5 transition-transform hover:-translate-y-0.5 hover:shadow-md">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold truncate">{job.title}</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-lg font-semibold truncate">{job.title}</h2>
+              <RemoteBadge type={job.remote_type} />
+            </div>
             <p className="text-sm mt-0.5" style={{ color: "var(--muted)" }}>
               {job.company_name ?? "Unknown company"}
               {job.department ? ` · ${job.department}` : ""}

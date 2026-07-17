@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.api.deps import get_db
 from app.domain.models import Company, Job
 from app.domain.schemas import FacetsResponse, FacetValue, JobListResponse, JobResponse
+from app.normalization.text import strip_boilerplate
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -17,6 +18,7 @@ class JobFilters:
     q: str | None
     location: str | None
     department: str | None
+    remote_type: str | None
     company_id: int | None
     source_id: int | None
     status: str | None
@@ -34,6 +36,8 @@ class JobFilters:
             conditions.append(Job.location.ilike(f"%{self.location}%"))
         if self.department is not None:
             conditions.append(Job.department == self.department)
+        if self.remote_type is not None:
+            conditions.append(Job.remote_type == self.remote_type)
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
@@ -46,6 +50,7 @@ class JobFilters:
 
 
 def _job_to_response(job: Job) -> JobResponse:
+    boilerplate = job.job_source.description_boilerplate_prefix if job.job_source else None
     return JobResponse(
         id=job.id,
         company_id=job.company_id,
@@ -55,6 +60,7 @@ def _job_to_response(job: Job) -> JobResponse:
         canonical_url=job.canonical_url,
         title=job.title,
         description=job.description,
+        description_clean=strip_boilerplate(job.description, boilerplate or ""),
         location=job.location,
         remote_type=job.remote_type,
         employment_type=job.employment_type,
@@ -75,6 +81,7 @@ def list_jobs(
     q: str | None = Query(default=None, description="Keyword search over title, description, company name"),
     location: str | None = Query(default=None, description="Substring match against the job location"),
     department: str | None = Query(default=None, description="Exact match on department"),
+    remote_type: str | None = Query(default=None, description="Filter by remote/hybrid/onsite/unknown"),
     company_id: int | None = None,
     source_id: int | None = None,
     status: str | None = "active",
@@ -85,12 +92,17 @@ def list_jobs(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> JobListResponse:
-    stmt = select(Job).join(Company, Company.id == Job.company_id).options(joinedload(Job.company))
+    stmt = (
+        select(Job)
+        .join(Company, Company.id == Job.company_id)
+        .options(joinedload(Job.company), joinedload(Job.job_source))
+    )
     count_stmt = select(func.count()).select_from(Job).join(Company, Company.id == Job.company_id)
 
     filters = JobFilters(
-        q=q, location=location, department=department, company_id=company_id,
-        source_id=source_id, status=status, posted_since_days=posted_since_days,
+        q=q, location=location, department=department, remote_type=remote_type,
+        company_id=company_id, source_id=source_id, status=status,
+        posted_since_days=posted_since_days,
     )
     for condition in filters.build_conditions():
         stmt = stmt.where(condition)
@@ -112,6 +124,7 @@ def get_facets(
     q: str | None = None,
     location: str | None = None,
     department: str | None = None,
+    remote_type: str | None = None,
     company_id: int | None = None,
     source_id: int | None = None,
     status: str | None = "active",
@@ -120,8 +133,9 @@ def get_facets(
     db: Session = Depends(get_db),
 ) -> FacetsResponse:
     filters = JobFilters(
-        q=q, location=location, department=department, company_id=company_id,
-        source_id=source_id, status=status, posted_since_days=posted_since_days,
+        q=q, location=location, department=department, remote_type=remote_type,
+        company_id=company_id, source_id=source_id, status=status,
+        posted_since_days=posted_since_days,
     )
 
     def top_values(column: ColumnElement[str]) -> list[FacetValue]:
@@ -147,7 +161,11 @@ def get_facets(
 
 @router.get("/{job_id}", response_model=JobResponse)
 def get_job(job_id: int, db: Session = Depends(get_db)) -> JobResponse:
-    job = db.scalar(select(Job).options(joinedload(Job.company)).where(Job.id == job_id))
+    job = db.scalar(
+        select(Job)
+        .options(joinedload(Job.company), joinedload(Job.job_source))
+        .where(Job.id == job_id)
+    )
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return _job_to_response(job)

@@ -17,29 +17,29 @@ export function SearchControls({ companies }: Props) {
   const [location, setLocation] = useState(params.get("location") ?? "");
   const [companyId, setCompanyId] = useState(params.get("company_id") ?? "");
   const [postedSince, setPostedSince] = useState(params.get("posted_since_days") ?? "");
+  const [remoteOnly, setRemoteOnly] = useState(params.get("remote_type") === "remote");
 
   useEffect(() => {
     setQ(params.get("q") ?? "");
     setLocation(params.get("location") ?? "");
     setCompanyId(params.get("company_id") ?? "");
     setPostedSince(params.get("posted_since_days") ?? "");
+    setRemoteOnly(params.get("remote_type") === "remote");
   }, [params]);
 
   function applyFilters(overrides: Record<string, string> = {}) {
     // Preserve params we don't manage here (e.g. `department` set via facet click).
     const usp = new URLSearchParams(params.toString());
-    const managed = ["q", "location", "company_id", "posted_since_days"];
     const set = (key: string, value: string) => {
       const v = overrides[key] !== undefined ? overrides[key] : value;
       if (v) usp.set(key, v);
       else usp.delete(key);
     };
-    for (const key of managed) {
-      const value = { q, location, company_id: companyId, posted_since_days: postedSince }[
-        key as keyof { q: string; location: string; company_id: string; posted_since_days: string }
-      ];
-      set(key, value);
-    }
+    set("q", q);
+    set("location", location);
+    set("company_id", companyId);
+    set("posted_since_days", postedSince);
+    set("remote_type", remoteOnly ? "remote" : "");
     const query = usp.toString();
     router.push(query ? `/?${query}` : "/");
   }
@@ -54,6 +54,7 @@ export function SearchControls({ companies }: Props) {
     setLocation("");
     setCompanyId("");
     setPostedSince("");
+    setRemoteOnly(false);
     router.push("/");
   }
 
@@ -132,8 +133,22 @@ export function SearchControls({ companies }: Props) {
           </select>
         </label>
       </div>
-      <div className="flex justify-between items-center text-sm" style={{ color: "var(--muted)" }}>
-        <span>Filter by keyword, location, company, or freshness</span>
+      <div className="flex justify-between items-center gap-3 flex-wrap text-sm">
+        <label className="flex items-center gap-2 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            checked={remoteOnly}
+            onChange={(e) => {
+              setRemoteOnly(e.target.checked);
+              applyFilters({ remote_type: e.target.checked ? "remote" : "" });
+            }}
+            className="h-4 w-4"
+          />
+          <span className="font-medium">Remote only</span>
+          <span style={{ color: "var(--muted)" }}>
+            (location says remote OR body confirms it)
+          </span>
+        </label>
         <button
           type="button"
           onClick={reset}

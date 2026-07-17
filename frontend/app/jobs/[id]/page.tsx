@@ -34,8 +34,10 @@ export default async function JobPage({ params }: Props) {
     notFound();
   }
 
-  // Greenhouse returns HTML in description; entities are double-encoded once.
-  const descriptionHtml = decodeHtmlEntities(job.description);
+  // Prefer the cleaned description (with per-source boilerplate stripped). Greenhouse returns HTML
+  // with double-encoded entities.
+  const descriptionHtml = decodeHtmlEntities(job.description_clean || job.description);
+  const hadBoilerplate = job.description_clean && job.description_clean !== job.description;
 
   return (
     <div className="space-y-6">
@@ -62,10 +64,14 @@ export default async function JobPage({ params }: Props) {
             Apply on company site ↗
           </a>
         </div>
-        <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <dl className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
           <div>
             <dt style={{ color: "var(--muted)" }}>Location</dt>
             <dd className="font-medium">{job.location ?? "Not specified"}</dd>
+          </div>
+          <div>
+            <dt style={{ color: "var(--muted)" }}>Remote</dt>
+            <dd className="font-medium capitalize">{job.remote_type ?? "unknown"}</dd>
           </div>
           <div>
             <dt style={{ color: "var(--muted)" }}>Posted</dt>
@@ -82,6 +88,11 @@ export default async function JobPage({ params }: Props) {
         </dl>
       </header>
 
+      {hadBoilerplate && (
+        <p className="text-xs" style={{ color: "var(--muted)" }}>
+          Company boilerplate (About / Who we are) has been hidden for readability.
+        </p>
+      )}
       <article className="card p-6 job-body" dangerouslySetInnerHTML={{ __html: descriptionHtml }} />
     </div>
   );

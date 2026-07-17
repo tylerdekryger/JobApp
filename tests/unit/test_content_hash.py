@@ -36,3 +36,11 @@ def test_unrelated_field_does_not_affect_hash():
     original = compute_content_hash(_job())
     same = compute_content_hash(_job(canonical_url="https://boards.greenhouse.io/acme/jobs/999"))
     assert original == same
+
+
+def test_derived_fields_do_not_affect_hash():
+    # remote_type / department are computed from upstream data; changing our normalization
+    # should not spuriously mark existing jobs as updated on the next sync.
+    original = compute_content_hash(_job())
+    same_after_derived_change = compute_content_hash(_job(remote_type="hybrid", department="Engineering"))
+    assert original == same_after_derived_change
