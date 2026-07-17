@@ -1,0 +1,38 @@
+{
+  "jobs": [
+    {
+      "id": 4000001,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4000001",
+      "location": { "name": "Remote - United States" },
+      "content": "<p>We are looking for a Senior Backend Engineer to join our platform team.</p>",
+      "departments": [{ "id": 1, "name": "Engineering" }],
+      "offices": [{ "id": 1, "name": "Remote" }],
+      "updated_at": "2026-07-01T10:00:00-04:00",
+      "first_published": "2026-06-28T09:00:00-04:00"
+    },
+    {
+      "id": 4000002,
+      "title": "Product Manager, Growth",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4000002",
+      "location": { "name": "New York, NY" },
+      "content": "<p>Own the growth roadmap for our core product.</p>",
+      "departments": [{ "id": 2, "name": "Product" }],
+      "offices": [{ "id": 2, "name": "New York" }],
+      "updated_at": "2026-07-02T10:00:00-04:00",
+      "first_published": "2026-06-30T09:00:00-04:00"
+    },
+    {
+      "id": 4000003,
+      "title": "Customer Success Manager",
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4000003",
+      "location": { "name": "Austin, TX" },
+      "content": "<p>Manage a portfolio of enterprise customers.</p>",
+      "departments": [{ "id": 3, "name": "Customer Success" }],
+      "offices": [{ "id": 3, "name": "Austin" }],
+      "updated_at": "2026-07-03T10:00:00-04:00",
+      "first_published": "2026-07-01T09:00:00-04:00"
+    }
+  ],
+  "meta": { "total": 3 }
+}
