@@ -125,17 +125,20 @@ def extract(payload: ExtractRequest, db: Session = Depends(get_db)) -> DiscoverR
 
 
 class RunNowResponse(BaseModel):
-    triggered: bool
-    detail: str
+    query: str
+    tokens_found: int
+    new_boards_added: int
+    jobs_added: int
+    added_tokens: list[str]
+    skipped: str | None = None
 
 
 @router.post("/run-now", response_model=RunNowResponse)
 def run_auto_discover_now() -> RunNowResponse:
-    """Trigger the scheduled auto-discover task on demand.
+    """Trigger the scheduled auto-discover task on demand and return a summary.
 
-    Runs synchronously in the request so the user gets confirmation, and reads its own
-    ANTHROPIC_API_KEY / rotating query state via the same code path the scheduler uses.
-    Server logs show the discovered boards; a fuller "recent discoveries" log is TODO.
+    Runs synchronously in the request so the button click gets real feedback. Same code
+    path the cron job uses, so behavior stays consistent.
     """
     from app.scheduling.discover_task import run_auto_discover
 
@@ -144,8 +147,15 @@ def run_auto_discover_now() -> RunNowResponse:
             status_code=400,
             detail="ANTHROPIC_API_KEY is not set. Set it to enable auto-discover.",
         )
-    run_auto_discover()
-    return RunNowResponse(triggered=True, detail="Auto-discover finished; check server logs.")
+    stats = run_auto_discover()
+    return RunNowResponse(
+        query=stats.query,
+        tokens_found=stats.tokens_found,
+        new_boards_added=stats.new_boards_added,
+        jobs_added=stats.jobs_added,
+        added_tokens=stats.added_tokens,
+        skipped=stats.skipped,
+    )
 
 
 @router.post("/search", response_model=DiscoverResponse)

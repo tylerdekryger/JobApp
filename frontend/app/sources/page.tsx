@@ -7,7 +7,9 @@ import {
   createSource,
   deleteSource,
   listSources,
+  runAutoDiscoverNow,
   syncSource,
+  type RunAutoDiscoverResponse,
   type SourceSummary,
   type SyncResult,
 } from "@/lib/api";
@@ -44,6 +46,9 @@ export default function SourcesPage() {
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [bulkText, setBulkText] = useState("");
   const [bulk, setBulk] = useState<BulkStatus | null>(null);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoResult, setAutoResult] = useState<RunAutoDiscoverResponse | null>(null);
+  const [autoError, setAutoError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -99,6 +104,21 @@ export default function SourcesPage() {
       setFlash({ kind: "err", msg: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function handleAutoRun() {
+    setAutoRunning(true);
+    setAutoError(null);
+    setAutoResult(null);
+    try {
+      const result = await runAutoDiscoverNow();
+      setAutoResult(result);
+      await refresh();
+    } catch (e) {
+      setAutoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAutoRunning(false);
     }
   }
 
@@ -249,6 +269,53 @@ export default function SourcesPage() {
           Currently supports Greenhouse boards (<code>boards.greenhouse.io/&lt;token&gt;</code>).
         </p>
       </form>
+
+      <div className="card p-4 space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-semibold">Auto-discover</h2>
+            <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>
+              Runs Mon–Fri, 08:00–18:00 ET, every 2 hours. Click to trigger a run right now.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleAutoRun}
+            disabled={autoRunning}
+            className="rounded-lg px-4 py-2 text-white font-medium text-sm whitespace-nowrap disabled:opacity-50"
+            style={{ background: "var(--accent)" }}
+          >
+            {autoRunning ? "Running…" : "Run auto-discover now"}
+          </button>
+        </div>
+        {autoError && (
+          <p className="text-sm" style={{ color: "#dc2626" }}>{autoError}</p>
+        )}
+        {autoResult && (
+          <div className="text-xs space-y-1" style={{ color: "var(--muted)" }}>
+            {autoResult.skipped ? (
+              <p style={{ color: "#dc2626" }}>Skipped: {autoResult.skipped}</p>
+            ) : (
+              <>
+                <p>
+                  Query used: <code>{autoResult.query}</code>
+                </p>
+                <p>
+                  {autoResult.tokens_found} candidate URLs found · {autoResult.new_boards_added} new boards added · {autoResult.jobs_added} jobs pulled in
+                </p>
+                {autoResult.added_tokens.length > 0 && (
+                  <p>
+                    Added: {autoResult.added_tokens.join(", ")}
+                  </p>
+                )}
+                {autoResult.new_boards_added === 0 && autoResult.tokens_found > 0 && (
+                  <p>All found URLs were already registered.</p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       <DiscoverSection onSourcesChanged={refresh} />
 

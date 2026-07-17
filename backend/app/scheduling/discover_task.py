@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -57,30 +58,43 @@ QUERIES = [
 ]
 
 
+@dataclass
+class DiscoverStats:
+    query: str
+    tokens_found: int = 0
+    new_boards_added: int = 0
+    jobs_added: int = 0
+    added_tokens: list[str] = field(default_factory=list)
+    skipped: str | None = None  # populated when the whole run was skipped (e.g. no API key)
+
+
 def _pick_query() -> str:
     day = datetime.now(timezone.utc).timetuple().tm_yday
     return QUERIES[day % len(QUERIES)]
 
 
-def run_auto_discover() -> None:
+def run_auto_discover() -> DiscoverStats:
     """One rotation-step of auto-discovery: search, validate, add new boards, sync each."""
+    stats = DiscoverStats(query=_pick_query())
+
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
-        logger.info("auto-discover skipped — ANTHROPIC_API_KEY not set")
-        return
+        stats.skipped = "ANTHROPIC_API_KEY not set"
+        logger.info("auto-discover skipped — %s", stats.skipped)
+        return stats
 
-    query = _pick_query()
-    logger.info("auto-discover starting query=%r", query)
+    logger.info("auto-discover starting query=%r", stats.query)
 
     try:
         from anthropic import Anthropic, APIError
     except ImportError:
-        logger.warning("anthropic SDK not installed — skipping auto-discover")
-        return
+        stats.skipped = "anthropic SDK not installed"
+        logger.warning(stats.skipped)
+        return stats
 
     client = Anthropic()
     prompt = (
-        f"Search the web for `site:boards.greenhouse.io {query}` and return every unique "
+        f"Search the web for `site:boards.greenhouse.io {stats.query}` and return every unique "
         "boards.greenhouse.io/<token> URL you find in the results, one per line, nothing else. "
         "Prefer smaller/less-known companies. Return at least 15 URLs if possible."
     )
@@ -92,18 +106,19 @@ def run_auto_discover() -> None:
             messages=[{"role": "user", "content": prompt}],
         )
     except APIError as exc:
-        logger.warning("auto-discover Anthropic error: %s", exc)
-        return
+        stats.skipped = f"Anthropic API error: {exc}"
+        logger.warning("auto-discover: %s", stats.skipped)
+        return stats
 
     text_blob = "\n".join(
         getattr(block, "text", "") for block in msg.content if getattr(block, "type", "") == "text"
     )
     tokens = set(_TOKEN_RE.findall(text_blob))
+    stats.tokens_found = len(tokens)
     if not tokens:
-        logger.info("auto-discover found no tokens for query=%r", query)
-        return
+        logger.info("auto-discover found no tokens for query=%r", stats.query)
+        return stats
 
-    added = 0
     session = SessionLocal()
     try:
         existing = {
@@ -114,7 +129,7 @@ def run_auto_discover() -> None:
         new_tokens = tokens - existing
         logger.info(
             "auto-discover found %d tokens (%d new) for query=%r",
-            len(tokens), len(new_tokens), query,
+            len(tokens), len(new_tokens), stats.query,
         )
     finally:
         session.close()
@@ -152,7 +167,9 @@ def run_auto_discover() -> None:
         session = SessionLocal()
         try:
             result = sync_source(session, source_id)
-            added += 1
+            stats.new_boards_added += 1
+            stats.jobs_added += result.jobs_added
+            stats.added_tokens.append(token)
             logger.info(
                 "auto-discover added token=%s jobs_added=%s",
                 token, result.jobs_added,
@@ -162,4 +179,8 @@ def run_auto_discover() -> None:
         finally:
             session.close()
 
-    logger.info("auto-discover finished query=%r new_boards_added=%d", query, added)
+    logger.info(
+        "auto-discover finished query=%r new_boards_added=%d jobs_added=%d",
+        stats.query, stats.new_boards_added, stats.jobs_added,
+    )
+    return stats

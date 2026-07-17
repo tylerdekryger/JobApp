@@ -230,6 +230,24 @@ export async function extractCandidates(text: string): Promise<DiscoverResponse>
   return res.json();
 }
 
+export interface RunAutoDiscoverResponse {
+  query: string;
+  tokens_found: number;
+  new_boards_added: number;
+  jobs_added: number;
+  added_tokens: string[];
+  skipped: string | null;
+}
+
+export async function runAutoDiscoverNow(): Promise<RunAutoDiscoverResponse> {
+  const res = await fetch(`${API_URL}/discover/run-now`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to run auto-discover: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function searchCandidates(query: string): Promise<DiscoverResponse> {
   const res = await fetch(`${API_URL}/discover/search`, {
     method: "POST",
