@@ -1,12 +1,13 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { FacetPanel } from "@/components/FacetPanel";
 import { JobTable } from "@/components/JobTable";
-import { RemoteStatsBar } from "@/components/RemoteStatsBar";
 import { SearchControls } from "@/components/SearchControls";
-import { getFacets, listCompanies, searchJobs } from "@/lib/api";
+import { listCompanies, searchJobs } from "@/lib/api";
 import type { JobSearchParams } from "@/lib/api";
+
+// Only remote-eligible roles are ever surfaced. Onsite and hybrid jobs never appear in results.
+const ALWAYS_ON_REMOTE_TYPES = "remote,unknown";
 
 export const dynamic = "force-dynamic";
 
@@ -56,21 +57,17 @@ export default async function HomePage({ searchParams }: PageProps) {
     q: pickString(sp.q),
     location: pickString(sp.location),
     department: pickString(sp.department),
-    remote_type: pickString(sp.remote_type),
+    remote_type: ALWAYS_ON_REMOTE_TYPES,
     title_contains: pickString(sp.title_contains),
     company_id: pickNumber(sp.company_id),
     posted_since_days: pickNumber(sp.posted_since_days),
     limit: 25,
   };
 
-  let jobs, companies, facets;
+  let jobs, companies;
   let error: string | null = null;
   try {
-    [jobs, companies, facets] = await Promise.all([
-      searchJobs(params),
-      listCompanies(),
-      getFacets(params),
-    ]);
+    [jobs, companies] = await Promise.all([searchJobs(params), listCompanies()]);
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
@@ -96,71 +93,45 @@ export default async function HomePage({ searchParams }: PageProps) {
         </div>
       )}
 
-      {jobs && facets && (
-        <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
-          <Suspense fallback={<div className="card p-4" style={{ color: "var(--muted)" }}>Loading facets…</div>}>
-            <FacetPanel
-              facets={facets}
-              activeLocation={params.location ?? null}
-              activeCompanyId={params.company_id !== undefined ? String(params.company_id) : null}
-              activeRemoteTypes={(params.remote_type ?? "").split(",").filter(Boolean)}
-              companiesById={companiesById}
-            />
-          </Suspense>
-          <div className="space-y-4">
-            <RemoteStatsBar
-              values={facets.remote_types}
-              currentSearchParams={new URLSearchParams(
-                Object.entries(sp).flatMap(([k, v]) => {
-                  const s = pickString(v);
-                  return s ? [[k, s] as [string, string]] : [];
-                }),
+      {jobs && (
+        <div className="space-y-4">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <p className="text-sm" style={{ color: "var(--muted)" }}>
+              {jobs.total.toLocaleString()} remote-eligible job{jobs.total === 1 ? "" : "s"} match
+              {params.q ? ` "${params.q}"` : ""}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {params.location && (
+                <ActiveFilterChip
+                  label={`Location: ${params.location}`}
+                  removeHref={buildRemoveHref(sp, "location")}
+                />
               )}
-            />
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <p className="text-sm" style={{ color: "var(--muted)" }}>
-                {jobs.total.toLocaleString()} job{jobs.total === 1 ? "" : "s"} match
-                {params.q ? ` "${params.q}"` : ""}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {params.department && (
-                  <ActiveFilterChip
-                    label={`Department: ${params.department}`}
-                    removeHref={buildRemoveHref(sp, "department")}
-                  />
-                )}
-                {params.location && (
-                  <ActiveFilterChip
-                    label={`Location: ${params.location}`}
-                    removeHref={buildRemoveHref(sp, "location")}
-                  />
-                )}
-                {params.title_contains && (
-                  <ActiveFilterChip
-                    label={`Role: ${params.title_contains}`}
-                    removeHref={buildRemoveHref(sp, "title_contains")}
-                  />
-                )}
-                {activeCompanyName && (
-                  <ActiveFilterChip
-                    label={`Company: ${activeCompanyName}`}
-                    removeHref={buildRemoveHref(sp, "company_id")}
-                  />
-                )}
-              </div>
+              {params.title_contains && (
+                <ActiveFilterChip
+                  label={`Role: ${params.title_contains}`}
+                  removeHref={buildRemoveHref(sp, "title_contains")}
+                />
+              )}
+              {activeCompanyName && (
+                <ActiveFilterChip
+                  label={`Company: ${activeCompanyName}`}
+                  removeHref={buildRemoveHref(sp, "company_id")}
+                />
+              )}
             </div>
-            {jobs.items.length === 0 ? (
-              <div className="card p-8 text-center" style={{ color: "var(--muted)" }}>
-                No jobs match your filters. Try loosening the search or{" "}
-                <Link href="/sources" className="underline" style={{ color: "var(--accent)" }}>
-                  add more sources
-                </Link>
-                .
-              </div>
-            ) : (
-              <JobTable jobs={jobs.items} />
-            )}
           </div>
+          {jobs.items.length === 0 ? (
+            <div className="card p-8 text-center" style={{ color: "var(--muted)" }}>
+              No jobs match your filters. Try loosening the search or{" "}
+              <Link href="/sources" className="underline" style={{ color: "var(--accent)" }}>
+                add more sources
+              </Link>
+              .
+            </div>
+          ) : (
+            <JobTable jobs={jobs.items} />
+          )}
         </div>
       )}
     </div>

@@ -25,6 +25,14 @@ function formatDateTime(iso: string | null): string {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+interface BulkStatus {
+  running: boolean;
+  total: number;
+  done: number;
+  currentUrl: string;
+  log: { url: string; result: "added" | "skipped" | "error"; detail: string }[];
+}
+
 export default function SourcesPage() {
   const [sources, setSources] = useState<SourceSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +41,8 @@ export default function SourcesPage() {
   const [companyName, setCompanyName] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const [bulkText, setBulkText] = useState("");
+  const [bulk, setBulk] = useState<BulkStatus | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -89,6 +99,94 @@ export default function SourcesPage() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function handleBulkImport() {
+    const urls = bulkText
+      .split(/\r?\n/)
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0);
+    if (urls.length === 0) return;
+
+    setBulk({ running: true, total: urls.length, done: 0, currentUrl: "", log: [] });
+
+    for (const line of urls) {
+      setBulk((b) => (b ? { ...b, currentUrl: line } : b));
+      try {
+        const before = sources.find((s) => s.source_url === line);
+        const created = await createSource(line);
+        const wasExisting = !!before && before.id === created.id;
+        // Sync fresh sources so the user gets jobs. For duplicates, don't re-sync — the user can
+        // click Sync manually if they want a refresh.
+        if (!wasExisting) {
+          try {
+            const res = await syncSource(created.id);
+            setBulk((b) =>
+              b
+                ? {
+                    ...b,
+                    done: b.done + 1,
+                    log: [
+                      ...b.log,
+                      {
+                        url: line,
+                        result: "added",
+                        detail: `${created.company_name} — ${res.jobs_added} jobs`,
+                      },
+                    ],
+                  }
+                : b,
+            );
+          } catch (syncErr) {
+            setBulk((b) =>
+              b
+                ? {
+                    ...b,
+                    done: b.done + 1,
+                    log: [
+                      ...b.log,
+                      {
+                        url: line,
+                        result: "error",
+                        detail: `added ${created.company_name} but sync failed: ${syncErr instanceof Error ? syncErr.message : String(syncErr)}`,
+                      },
+                    ],
+                  }
+                : b,
+            );
+          }
+        } else {
+          setBulk((b) =>
+            b
+              ? {
+                  ...b,
+                  done: b.done + 1,
+                  log: [
+                    ...b.log,
+                    { url: line, result: "skipped", detail: "already registered" },
+                  ],
+                }
+              : b,
+          );
+        }
+      } catch (e) {
+        setBulk((b) =>
+          b
+            ? {
+                ...b,
+                done: b.done + 1,
+                log: [
+                  ...b.log,
+                  { url: line, result: "error", detail: e instanceof Error ? e.message : String(e) },
+                ],
+              }
+            : b,
+        );
+      }
+    }
+
+    setBulk((b) => (b ? { ...b, running: false, currentUrl: "" } : b));
+    await refresh();
   }
 
   async function handleDelete(id: number, name: string) {
@@ -150,6 +248,74 @@ export default function SourcesPage() {
           Currently supports Greenhouse boards (<code>boards.greenhouse.io/&lt;token&gt;</code>).
         </p>
       </form>
+
+      <details className="card p-4" open={bulk !== null}>
+        <summary className="cursor-pointer text-sm font-medium">
+          Bulk add — paste many Greenhouse board URLs at once
+        </summary>
+        <div className="mt-4 space-y-3">
+          <textarea
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            placeholder={`One URL per line, e.g.\nhttps://boards.greenhouse.io/airbnb\nhttps://boards.greenhouse.io/reddit\nhttps://boards.greenhouse.io/instacart`}
+            rows={6}
+            disabled={bulk?.running}
+            className="w-full rounded-lg border px-3 py-2 bg-transparent font-mono text-sm"
+            style={{ borderColor: "var(--border)" }}
+          />
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              Each URL is created and synced sequentially — expect ~1–3 seconds per company.
+            </p>
+            <button
+              type="button"
+              onClick={handleBulkImport}
+              disabled={bulk?.running || !bulkText.trim()}
+              className="rounded-lg px-4 py-2 text-white font-medium whitespace-nowrap disabled:opacity-50"
+              style={{ background: "var(--accent)" }}
+            >
+              {bulk?.running
+                ? `Importing ${bulk.done}/${bulk.total}…`
+                : "Import all"}
+            </button>
+          </div>
+          {bulk && (
+            <div className="mt-2 space-y-2">
+              {bulk.running && (
+                <p className="text-xs" style={{ color: "var(--muted)" }}>
+                  Working on {bulk.currentUrl}…
+                </p>
+              )}
+              {bulk.log.length > 0 && (
+                <ul className="text-xs space-y-1 max-h-64 overflow-y-auto rounded border p-2" style={{ borderColor: "var(--border)" }}>
+                  {bulk.log.map((entry, i) => (
+                    <li
+                      key={i}
+                      style={{
+                        color:
+                          entry.result === "added"
+                            ? "#16a34a"
+                            : entry.result === "skipped"
+                              ? "var(--muted)"
+                              : "#dc2626",
+                      }}
+                    >
+                      [{entry.result}] {entry.url} — {entry.detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!bulk.running && bulk.log.length > 0 && (
+                <p className="text-xs" style={{ color: "var(--muted)" }}>
+                  {bulk.log.filter((l) => l.result === "added").length} added ·{" "}
+                  {bulk.log.filter((l) => l.result === "skipped").length} already existed ·{" "}
+                  {bulk.log.filter((l) => l.result === "error").length} failed
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </details>
 
       {flash && (
         <div

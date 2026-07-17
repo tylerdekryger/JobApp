@@ -9,8 +9,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen">
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen" suppressHydrationWarning>
         <header className="border-b" style={{ borderColor: "var(--border)", background: "var(--card)" }}>
           <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between gap-4">
             <Link href="/" className="font-semibold text-lg tracking-tight">

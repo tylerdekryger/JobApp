@@ -18,9 +18,6 @@ export function SearchControls({ companies }: Props) {
   const [companyId, setCompanyId] = useState(params.get("company_id") ?? "");
   const [postedSince, setPostedSince] = useState(params.get("posted_since_days") ?? "");
   const [titleContains, setTitleContains] = useState(params.get("title_contains") ?? "");
-  // "Remote (include unknown)": true when the filter is anything that includes 'remote'
-  const remoteParam = params.get("remote_type") ?? "";
-  const [remoteEligible, setRemoteEligible] = useState(remoteParam.split(",").includes("remote"));
 
   useEffect(() => {
     setQ(params.get("q") ?? "");
@@ -28,8 +25,6 @@ export function SearchControls({ companies }: Props) {
     setCompanyId(params.get("company_id") ?? "");
     setPostedSince(params.get("posted_since_days") ?? "");
     setTitleContains(params.get("title_contains") ?? "");
-    const r = params.get("remote_type") ?? "";
-    setRemoteEligible(r.split(",").includes("remote"));
   }, [params]);
 
   function applyFilters(overrides: Record<string, string> = {}) {
@@ -91,13 +86,13 @@ export function SearchControls({ companies }: Props) {
       <div>
         <label className="flex flex-col text-sm">
           <span className="mb-1 font-medium" style={{ color: "var(--muted)" }}>
-            Role keywords <span className="font-normal">(comma-separated — title must contain ALL)</span>
+            Role keywords <span className="font-normal">(comma-separated — title matches ANY)</span>
           </span>
           <input
             type="text"
             value={titleContains}
             onChange={(e) => setTitleContains(e.target.value)}
-            placeholder='e.g. Manager, Customer Success'
+            placeholder='e.g. Manager, Customer Success, Solutions'
             className="rounded-lg border px-3 py-2 bg-transparent"
             style={{ borderColor: "var(--border)" }}
           />
@@ -160,21 +155,9 @@ export function SearchControls({ companies }: Props) {
         </label>
       </div>
       <div className="flex justify-between items-center gap-3 flex-wrap text-sm">
-        <label className="flex items-center gap-2 select-none cursor-pointer">
-          <input
-            type="checkbox"
-            checked={remoteEligible}
-            onChange={(e) => {
-              setRemoteEligible(e.target.checked);
-              applyFilters({ remote_type: e.target.checked ? "remote,unknown" : "" });
-            }}
-            className="h-4 w-4"
-          />
-          <span className="font-medium">Remote (include unknown)</span>
-          <span style={{ color: "var(--muted)" }}>
-            confirmed remote + jobs where remote status isn&apos;t stated
-          </span>
-        </label>
+        <span style={{ color: "var(--muted)" }}>
+          Only remote-eligible roles are shown (confirmed remote + jobs where remote status isn&apos;t stated).
+        </span>
         <button
           type="button"
           onClick={reset}

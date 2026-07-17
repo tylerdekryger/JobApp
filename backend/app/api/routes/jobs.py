@@ -60,8 +60,11 @@ class JobFilters:
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
-        for term in self._title_terms():
-            conditions.append(Job.title.ilike(f"%{term}%"))
+        title_terms = self._title_terms()
+        if title_terms:
+            # ANY of the terms may appear in the title (OR). Comma-separated input like
+            # "Manager, Customer Success" matches titles containing either phrase.
+            conditions.append(or_(*[Job.title.ilike(f"%{term}%") for term in title_terms]))
         if self.q:
             pattern = f"%{self.q}%"
             conditions.append(
@@ -116,7 +119,7 @@ def list_jobs(
     remote_type: str | None = Query(default=None, description="Filter by remote/hybrid/onsite/unknown"),
     title_contains: str | None = Query(
         default=None,
-        description="Comma-separated terms; ALL must appear in the title (case-insensitive).",
+        description="Comma-separated terms; ANY may appear in the title (case-insensitive).",
     ),
     company_id: int | None = None,
     source_id: int | None = None,
