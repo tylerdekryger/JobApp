@@ -142,10 +142,12 @@ def run_auto_discover_now() -> RunNowResponse:
     """
     from app.scheduling.discover_task import run_auto_discover
 
-    if not (os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("ANTHROPIC_API_KEY", "").strip()):
+    if not any(
+        os.getenv(k, "").strip() for k in ("TAVILY_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY")
+    ):
         raise HTTPException(
             status_code=400,
-            detail="No LLM API key set. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY to enable auto-discover.",
+            detail="No search key set. Add TAVILY_API_KEY (free) to enable auto-discover.",
         )
     stats = run_auto_discover()
     return RunNowResponse(
@@ -171,17 +173,23 @@ def search(payload: SearchRequest, db: Session = Depends(get_db)) -> DiscoverRes
         raise HTTPException(status_code=422, detail="Query cannot be empty.")
 
     # Reuse the same provider fallback the scheduled auto-discover uses.
-    from app.scheduling.discover_task import _search_via_anthropic, _search_via_gemini
+    from app.scheduling.discover_task import (
+        _search_via_anthropic,
+        _search_via_gemini,
+        _search_via_tavily,
+    )
 
     text_blob = ""
     last_error: str | None = None
-    if os.getenv("GEMINI_API_KEY", "").strip():
+    if os.getenv("TAVILY_API_KEY", "").strip():
+        text_blob, last_error = _search_via_tavily(query)
+    if not text_blob and os.getenv("GEMINI_API_KEY", "").strip():
         text_blob, last_error = _search_via_gemini(query)
     if not text_blob and os.getenv("ANTHROPIC_API_KEY", "").strip():
         text_blob, last_error = _search_via_anthropic(query)
     if not text_blob:
         detail = last_error or (
-            "No LLM API key set. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY to enable auto-search, "
+            "No search key set. Add TAVILY_API_KEY (free) to enable auto-search, "
             "or use the paste-text option instead."
         )
         raise HTTPException(status_code=400, detail=detail)

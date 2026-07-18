@@ -73,6 +73,36 @@ def _pick_query() -> str:
     return QUERIES[day % len(QUERIES)]
 
 
+def _search_via_tavily(query: str) -> tuple[str, str | None]:
+    """Query Tavily and return the raw JSON as text so the token regex can pick out URLs.
+
+    Free tier: 1,000 searches/month, no card required. Filters to boards.greenhouse.io
+    so we don't burn a call on unrelated results.
+    """
+    import httpx
+
+    key = os.environ["TAVILY_API_KEY"]
+    r = httpx.post(
+        "https://api.tavily.com/search",
+        json={
+            "api_key": key,
+            "query": f"{query} careers hiring greenhouse job board",
+            "search_depth": "advanced",
+            "max_results": 20,
+            "include_domains": ["boards.greenhouse.io"],
+        },
+        timeout=30,
+    )
+    if r.status_code != 200:
+        try:
+            msg = r.json().get("error") or r.json().get("detail") or r.text
+        except ValueError:
+            msg = r.text
+        return "", f"Tavily API error ({r.status_code}): {str(msg)[:200]}"
+    # We return the full body as a string; the caller extracts tokens with a regex.
+    return r.text, None
+
+
 def _search_via_gemini(query: str) -> tuple[str, str | None]:
     """Try Gemini's google_search grounding. Returns (text_blob, error_reason)."""
     import httpx  # local import so the module imports cleanly at boot
@@ -142,17 +172,21 @@ def run_auto_discover() -> DiscoverStats:
     """
     stats = DiscoverStats(query=_pick_query())
 
+    has_tavily = bool(os.getenv("TAVILY_API_KEY", "").strip())
     has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
     has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
-    if not has_gemini and not has_anthropic:
-        stats.skipped = "No LLM API key (GEMINI_API_KEY or ANTHROPIC_API_KEY) is set"
+    if not (has_tavily or has_gemini or has_anthropic):
+        stats.skipped = "No search key set (TAVILY_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY)"
         logger.info("auto-discover skipped — %s", stats.skipped)
         return stats
 
     logger.info("auto-discover starting query=%r", stats.query)
 
-    # Prefer whichever provider is configured; fall back to the other on error.
+    # Prefer Tavily (free, no card, purpose-built for web search); fall back to LLM
+    # providers with search grounding if Tavily isn't configured or errors out.
     providers: list[tuple[str, callable]] = []
+    if has_tavily:
+        providers.append(("tavily", _search_via_tavily))
     if has_gemini:
         providers.append(("gemini", _search_via_gemini))
     if has_anthropic:
