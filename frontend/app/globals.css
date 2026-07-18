@@ -10,18 +10,7 @@
   --muted: #64748b;
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b1220;
-    --card: #131a2b;
-    --border: #1f2937;
-    --text: #e2e8f0;
-    --muted: #94a3b8;
-    --accent: #60a5fa;
-    --accent-hover: #93c5fd;
-  }
+  color-scheme: light;
 }
 
 html,

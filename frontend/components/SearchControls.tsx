@@ -49,14 +49,14 @@ export function SearchControls({}: Props) {
         e.preventDefault();
         apply();
       }}
-      className="card p-4 space-y-3"
+      className="card p-4 space-y-3 sticky top-0 z-20 shadow-sm"
     >
       <div className="flex flex-col sm:flex-row gap-3">
         <input
           type="text"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search titles, descriptions, companies..."
+          placeholder="Search titles..."
           className="flex-1 rounded-lg border px-3 py-2 bg-transparent"
           style={{ borderColor: "var(--border)" }}
         />

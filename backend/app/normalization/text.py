@@ -9,6 +9,111 @@ import re
 from collections import Counter
 from html.parser import HTMLParser
 
+# Substrings that strongly signal a job is US-based (case-insensitive substring match on the
+# raw location string). Kept intentionally broad — over-including a few borderline rows is
+# less bad than silently dropping US-eligible roles.
+US_LOCATION_INDICATORS = (
+    "united states",
+    "usa",
+    "u.s.a.",
+    " us ",
+    " us,",
+    ",us",
+    "-us",
+    "us-",
+    "us remote",
+    "remote us",
+    "remote - us",
+    "remote, us",
+    "remote (us)",
+    "remote-us",
+    # A representative slice of US states / major metro tags that show up in ATS locations.
+    # Not exhaustive — the goal is high recall, not perfect coverage.
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+    "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+    "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+    "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york", "north carolina",
+    "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island",
+    "south carolina", "south dakota", "tennessee", "texas", "utah", "vermont",
+    "virginia", "washington", "west virginia", "wisconsin", "wyoming",
+    "san francisco", "san jose", "los angeles", "seattle", "boston", "chicago",
+    "atlanta", "austin", "denver", "portland", "miami", "dallas", "houston",
+    "philadelphia", "phoenix", "san diego", "minneapolis", "detroit", "brooklyn", "manhattan",
+    # NOTE: We deliberately don't rely on two-letter state abbreviations like ", CA" because
+    # they cause substring collisions ("Toronto, Canada" would falsely match ", ca").
+    # The full state names above cover the common case; ATS locations that use only bare
+    # abbrevs (e.g. "Austin, TX") get caught via city/state matches instead.
+)
+
+# Substrings that strongly signal a job is NOT in the US. If a location contains only
+# non-US indicators (and no US indicator), we exclude it.
+NON_US_LOCATION_INDICATORS = (
+    "canada", "toronto", "vancouver", "montreal", "ottawa", "calgary",
+    "united kingdom", " uk", "uk ", "u.k.", "london", "manchester", "edinburgh", "cambridge, uk",
+    "ireland", "dublin", "cork",
+    "germany", "berlin", "munich", "hamburg", "frankfurt",
+    "france", "paris",
+    "netherlands", "amsterdam", "rotterdam",
+    "spain", "madrid", "barcelona",
+    "portugal", "lisbon",
+    "italy", "milan", "rome",
+    "poland", "warsaw", "krakow",
+    "romania", "bucharest",
+    "sweden", "stockholm",
+    "norway", "oslo",
+    "denmark", "copenhagen",
+    "finland", "helsinki",
+    "switzerland", "zurich", "geneva",
+    "austria", "vienna",
+    "belgium", "brussels",
+    "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "chennai", "pune",
+    "philippines", "manila",
+    "singapore",
+    "australia", "sydney", "melbourne",
+    "new zealand", "auckland",
+    "japan", "tokyo",
+    "china", "shanghai", "beijing", "hong kong",
+    "korea", "seoul",
+    "brazil", "sao paulo", "rio de janeiro",
+    "mexico", "mexico city", "guadalajara",  # "mexico" alone catches "Remote - Mexico"
+    "argentina", "buenos aires",
+    "colombia", "bogota", "medellin",
+    "chile", "santiago",
+    "peru", "lima",
+    "uruguay", "montevideo",
+    "costa rica",
+    "guatemala",
+    "south africa", "johannesburg", "cape town",
+    "kenya", "nairobi",
+    "nigeria", "lagos",
+    "israel", "tel aviv",
+    "uae", "dubai", "abu dhabi",
+    "turkey", "istanbul",
+    "emea", "apac", "latam",
+    "european union",
+)
+
+
+def is_us_eligible(location: str | None) -> bool:
+    """Best-effort check: is this location string plausibly US-based?
+
+    Returns True for null/empty (we can't judge), for anything containing a US indicator,
+    and for standalone 'Remote' (ambiguous — global-remote jobs typically include the US).
+    Returns False only when the string contains non-US indicators AND no US indicator.
+    """
+    if not location:
+        return True
+    lc = location.lower()
+    has_us = any(ind in lc for ind in US_LOCATION_INDICATORS)
+    if has_us:
+        return True
+    has_non_us = any(ind in lc for ind in NON_US_LOCATION_INDICATORS)
+    if has_non_us:
+        return False
+    # No signal either way. "Remote" alone or an unrecognized string — keep permissively.
+    return True
+
 _LEADING_ID_RE = re.compile(r"^\s*\d[\d\-_.]*\s+")
 
 _REMOTE_LOCATION_TOKENS = (

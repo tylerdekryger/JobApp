@@ -5,12 +5,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
+from sqlalchemy import and_, not_
+
 from app.analysis.fit import AnalysisConfigError, analyze_job_against_resume
 from app.api.deps import get_db
 from app.api.routes.profile import get_or_create_profile
 from app.domain.models import Company, Job
 from app.domain.schemas import AnalyzeJobResponse, FacetsResponse, FacetValue, JobListResponse, JobResponse
-from app.normalization.text import strip_boilerplate
+from app.normalization.text import (
+    NON_US_LOCATION_INDICATORS,
+    US_LOCATION_INDICATORS,
+    strip_boilerplate,
+)
+
+
+def _us_eligibility_condition() -> ColumnElement[bool]:
+    """WHERE clause equivalent of ``is_us_eligible``: include null/empty, US indicators, or
+    ambiguous strings; exclude only when the location has ONLY non-US indicators."""
+    us_match = or_(*[Job.location.ilike(f"%{ind}%") for ind in US_LOCATION_INDICATORS])
+    non_us_match = or_(*[Job.location.ilike(f"%{ind}%") for ind in NON_US_LOCATION_INDICATORS])
+    return or_(
+        Job.location.is_(None),
+        Job.location == "",
+        us_match,
+        and_(not_(non_us_match), not_(us_match)),  # no signal either way — keep permissively
+    )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -66,10 +85,9 @@ class JobFilters:
             # "Manager, Customer Success" matches titles containing either phrase.
             conditions.append(or_(*[Job.title.ilike(f"%{term}%") for term in title_terms]))
         if self.q:
-            pattern = f"%{self.q}%"
-            conditions.append(
-                or_(Job.title.ilike(pattern), Job.description.ilike(pattern), Company.name.ilike(pattern))
-            )
+            # Match against title only. Previously also matched description + company name,
+            # which produced rows whose Role column didn't obviously contain the search term.
+            conditions.append(Job.title.ilike(f"%{self.q}%"))
         return conditions
 
 
@@ -159,6 +177,11 @@ def list_jobs(
     age_filter = or_(Job.posted_at.is_(None), Job.posted_at >= age_cutoff)
     stmt = stmt.where(age_filter)
     count_stmt = count_stmt.where(age_filter)
+
+    # US-only filter: heuristic on the location string. See is_us_eligible for the rules.
+    us_filter = _us_eligibility_condition()
+    stmt = stmt.where(us_filter)
+    count_stmt = count_stmt.where(us_filter)
 
     total = db.scalar(count_stmt) or 0
 

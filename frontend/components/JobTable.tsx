@@ -41,6 +41,17 @@ function isoToShort(iso: string | null): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// Explain why a job made it through the "remote-eligible" filter when its location doesn't
+// obviously say Remote. Returns an empty string for the obvious cases (location contains
+// "remote"), so the cell renders blank and only the ambiguous rows are annotated.
+function inclusionReason(location: string | null, remoteType: string | null): string {
+  const loc = (location ?? "").toLowerCase();
+  if (loc.includes("remote")) return "";
+  if (remoteType === "remote") return "Body confirms remote";
+  if (remoteType === "unknown" || remoteType === null) return "Remote status unclear — verify before applying";
+  return ""; // shouldn't happen given the remote filter, but stay silent if it does
+}
+
 type AnalysisState =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -139,6 +150,7 @@ export function JobTable({ jobs, currentSort }: Props) {
               <Th>Company</Th>
               <Th>Role</Th>
               <Th>Location</Th>
+              <Th className="min-w-[160px]">Why kept</Th>
               <Th>Link</Th>
               <Th className="min-w-[220px]">Overview</Th>
               <Th className="min-w-[220px]">Fit</Th>
@@ -194,6 +206,11 @@ export function JobTable({ jobs, currentSort }: Props) {
                       <RemoteDot type={job.remote_type} />
                       <span>{job.location ?? "—"}</span>
                     </div>
+                  </Td>
+                  <Td className="text-xs" style={{ color: "var(--muted)" }}>
+                    {inclusionReason(job.location, job.remote_type) || (
+                      <span style={{ color: "var(--border)" }}>—</span>
+                    )}
                   </Td>
                   <Td>
                     <a
