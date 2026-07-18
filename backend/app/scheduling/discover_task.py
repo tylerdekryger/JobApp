@@ -65,7 +65,15 @@ class DiscoverStats:
     new_boards_added: int = 0
     jobs_added: int = 0
     added_tokens: list[str] = field(default_factory=list)
+    skipped_too_large: list[str] = field(default_factory=list)  # tokens skipped for job_count > cap
     skipped: str | None = None  # populated when the whole run was skipped (e.g. no API key)
+
+
+# Skip auto-adding any board bigger than this — the assumption is that giant boards
+# (>150 open roles) belong to well-known companies whose jobs cross-post everywhere,
+# so they add noise rather than uncovering hidden opportunities. Manual paste/single-add
+# is still available if you specifically want a big board.
+MAX_AUTO_ADD_JOB_COUNT = 150
 
 
 def _pick_query() -> str:
@@ -234,6 +242,24 @@ def run_auto_discover() -> DiscoverStats:
 
     # Each add + sync gets its own session so a failure on one doesn't poison the batch.
     for token in new_tokens:
+        # Pre-check the board's size before committing to an add + sync. Skip anything
+        # bigger than MAX_AUTO_ADD_JOB_COUNT (assumed cross-posted noise from big co's).
+        try:
+            import httpx
+            r = httpx.get(
+                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
+                timeout=6.0,
+            )
+            job_count = len(r.json().get("jobs", [])) if r.status_code == 200 else None
+        except Exception:  # noqa: BLE001
+            job_count = None
+        if job_count is None:
+            continue  # unreachable board; skip silently
+        if job_count > MAX_AUTO_ADD_JOB_COUNT:
+            stats.skipped_too_large.append(f"{token} ({job_count})")
+            logger.info("auto-discover skipping token=%s size=%d (> %d)", token, job_count, MAX_AUTO_ADD_JOB_COUNT)
+            continue
+
         session = SessionLocal()
         try:
             url = f"https://boards.greenhouse.io/{token}"

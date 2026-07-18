@@ -308,9 +308,17 @@ export default function SourcesPage() {
                     Added: {autoResult.added_tokens.join(", ")}
                   </p>
                 )}
-                {autoResult.new_boards_added === 0 && autoResult.tokens_found > 0 && (
-                  <p>All found URLs were already registered.</p>
+                {autoResult.skipped_too_large.length > 0 && (
+                  <p>
+                    Skipped as too large (&gt;150 jobs; big companies cross-post):{" "}
+                    {autoResult.skipped_too_large.join(", ")}
+                  </p>
                 )}
+                {autoResult.new_boards_added === 0 &&
+                  autoResult.tokens_found > 0 &&
+                  autoResult.skipped_too_large.length === 0 && (
+                    <p>All found URLs were already registered.</p>
+                  )}
               </>
             )}
           </div>

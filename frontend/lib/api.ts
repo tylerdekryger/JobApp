@@ -236,6 +236,7 @@ export interface RunAutoDiscoverResponse {
   new_boards_added: number;
   jobs_added: number;
   added_tokens: string[];
+  skipped_too_large: string[];
   skipped: string | null;
 }
 

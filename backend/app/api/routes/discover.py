@@ -130,6 +130,7 @@ class RunNowResponse(BaseModel):
     new_boards_added: int
     jobs_added: int
     added_tokens: list[str]
+    skipped_too_large: list[str] = []
     skipped: str | None = None
 
 
@@ -156,6 +157,7 @@ def run_auto_discover_now() -> RunNowResponse:
         new_boards_added=stats.new_boards_added,
         jobs_added=stats.jobs_added,
         added_tokens=stats.added_tokens,
+        skipped_too_large=stats.skipped_too_large,
         skipped=stats.skipped,
     )
 
