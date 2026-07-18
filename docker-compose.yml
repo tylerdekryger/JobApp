@@ -33,6 +33,7 @@ services:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/job_intelligence
       REDIS_URL: redis://redis:6379/0
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:

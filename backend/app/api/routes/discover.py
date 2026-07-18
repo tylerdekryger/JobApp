@@ -142,10 +142,10 @@ def run_auto_discover_now() -> RunNowResponse:
     """
     from app.scheduling.discover_task import run_auto_discover
 
-    if not os.getenv("ANTHROPIC_API_KEY", "").strip():
+    if not (os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("ANTHROPIC_API_KEY", "").strip()):
         raise HTTPException(
             status_code=400,
-            detail="ANTHROPIC_API_KEY is not set. Set it to enable auto-discover.",
+            detail="No LLM API key set. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY to enable auto-discover.",
         )
     stats = run_auto_discover()
     return RunNowResponse(
@@ -169,37 +169,22 @@ def search(payload: SearchRequest, db: Session = Depends(get_db)) -> DiscoverRes
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="Query cannot be empty.")
-    if not os.getenv("ANTHROPIC_API_KEY", "").strip():
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "ANTHROPIC_API_KEY is not set. Set it to enable auto-search, "
-                "or use the paste-text option instead."
-            ),
+
+    # Reuse the same provider fallback the scheduled auto-discover uses.
+    from app.scheduling.discover_task import _search_via_anthropic, _search_via_gemini
+
+    text_blob = ""
+    last_error: str | None = None
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        text_blob, last_error = _search_via_gemini(query)
+    if not text_blob and os.getenv("ANTHROPIC_API_KEY", "").strip():
+        text_blob, last_error = _search_via_anthropic(query)
+    if not text_blob:
+        detail = last_error or (
+            "No LLM API key set. Add GEMINI_API_KEY (free) or ANTHROPIC_API_KEY to enable auto-search, "
+            "or use the paste-text option instead."
         )
+        raise HTTPException(status_code=400, detail=detail)
 
-    # Import lazily so the app still boots without the SDK when discover isn't used.
-    from anthropic import Anthropic, APIError
-
-    client = Anthropic()
-    prompt = (
-        f"Search the web for `site:boards.greenhouse.io {query}` and return every unique "
-        "boards.greenhouse.io/<token> URL you find in the results, one per line, nothing else. "
-        "Prefer smaller/less-known companies. Return at least 10 URLs if possible."
-    )
-    try:
-        msg = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=1500,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except APIError as exc:
-        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc}")
-
-    # Concatenate any text blocks in the response and extract tokens from them.
-    text_blob = "\n".join(
-        getattr(block, "text", "") for block in msg.content if getattr(block, "type", "") == "text"
-    )
     tokens = set(_TOKEN_RE.findall(text_blob))
     return _validate_and_shape(tokens, _existing_tokens(db))

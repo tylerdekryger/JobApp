@@ -73,28 +73,46 @@ def _pick_query() -> str:
     return QUERIES[day % len(QUERIES)]
 
 
-def run_auto_discover() -> DiscoverStats:
-    """One rotation-step of auto-discovery: search, validate, add new boards, sync each."""
-    stats = DiscoverStats(query=_pick_query())
+def _search_via_gemini(query: str) -> tuple[str, str | None]:
+    """Try Gemini's google_search grounding. Returns (text_blob, error_reason)."""
+    import httpx  # local import so the module imports cleanly at boot
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        stats.skipped = "ANTHROPIC_API_KEY not set"
-        logger.info("auto-discover skipped — %s", stats.skipped)
-        return stats
+    key = os.environ["GEMINI_API_KEY"]
+    prompt = (
+        f"Find at least 15 unique URLs of the form boards.greenhouse.io/<token> for "
+        f"{query}. Prefer smaller/less-known companies. Return URLs only, one per line."
+    )
+    r = httpx.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+        headers={"X-goog-api-key": key, "Content-Type": "application/json"},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "tools": [{"google_search": {}}],
+        },
+        timeout=60,
+    )
+    if r.status_code != 200:
+        try:
+            msg = r.json().get("error", {}).get("message", r.text)
+        except ValueError:
+            msg = r.text
+        return "", f"Gemini API error ({r.status_code}): {msg[:200]}"
+    body = r.json()
+    parts = body.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    text = "\n".join(p.get("text", "") for p in parts if "text" in p)
+    return text, None
 
-    logger.info("auto-discover starting query=%r", stats.query)
 
+def _search_via_anthropic(query: str) -> tuple[str, str | None]:
+    """Try Claude's web_search tool. Returns (text_blob, error_reason)."""
     try:
         from anthropic import Anthropic, APIError
     except ImportError:
-        stats.skipped = "anthropic SDK not installed"
-        logger.warning(stats.skipped)
-        return stats
+        return "", "anthropic SDK not installed"
 
     client = Anthropic()
     prompt = (
-        f"Search the web for `site:boards.greenhouse.io {stats.query}` and return every unique "
+        f"Search the web for `site:boards.greenhouse.io {query}` and return every unique "
         "boards.greenhouse.io/<token> URL you find in the results, one per line, nothing else. "
         "Prefer smaller/less-known companies. Return at least 15 URLs if possible."
     )
@@ -106,13 +124,59 @@ def run_auto_discover() -> DiscoverStats:
             messages=[{"role": "user", "content": prompt}],
         )
     except APIError as exc:
-        stats.skipped = f"Anthropic API error: {exc}"
-        logger.warning("auto-discover: %s", stats.skipped)
-        return stats
+        return "", f"Anthropic API error: {exc}"
 
-    text_blob = "\n".join(
+    text = "\n".join(
         getattr(block, "text", "") for block in msg.content if getattr(block, "type", "") == "text"
     )
+    return text, None
+
+
+def run_auto_discover() -> DiscoverStats:
+    """One rotation-step of auto-discovery: search, validate, add new boards, sync each.
+
+    Prefers Gemini's google_search grounding (free-tier friendly for the LLM half, though
+    grounding itself requires a paid Google Cloud project). Falls back to Anthropic's
+    web_search tool if only ANTHROPIC_API_KEY is set. If neither succeeds, records the
+    error on the returned stats so the UI can surface it.
+    """
+    stats = DiscoverStats(query=_pick_query())
+
+    has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
+    has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
+    if not has_gemini and not has_anthropic:
+        stats.skipped = "No LLM API key (GEMINI_API_KEY or ANTHROPIC_API_KEY) is set"
+        logger.info("auto-discover skipped — %s", stats.skipped)
+        return stats
+
+    logger.info("auto-discover starting query=%r", stats.query)
+
+    # Prefer whichever provider is configured; fall back to the other on error.
+    providers: list[tuple[str, callable]] = []
+    if has_gemini:
+        providers.append(("gemini", _search_via_gemini))
+    if has_anthropic:
+        providers.append(("anthropic", _search_via_anthropic))
+
+    text_blob = ""
+    last_error: str | None = None
+    for name, fn in providers:
+        text_blob, err = fn(stats.query)
+        if err is None and text_blob:
+            logger.info("auto-discover search via %s succeeded", name)
+            break
+        last_error = f"{name}: {err or 'empty response'}"
+        logger.info("auto-discover search via %s failed — %s", name, err)
+
+    if not text_blob:
+        stats.skipped = (
+            f"web search unavailable ({last_error}). "
+            "Gemini's Google Search grounding requires a paid Cloud project; "
+            "use the paste-mode Discover section on /sources instead."
+        )
+        logger.info("auto-discover: %s", stats.skipped)
+        return stats
+
     tokens = set(_TOKEN_RE.findall(text_blob))
     stats.tokens_found = len(tokens)
     if not tokens:
