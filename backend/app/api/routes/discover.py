@@ -1,41 +1,35 @@
-"""Extract and validate candidate Greenhouse job boards from arbitrary text.
+"""Extract and validate candidate ATS job boards from arbitrary text.
 
-The user pastes anything (Google search results, LinkedIn posts, articles, their own
-curated list) and we extract ``boards.greenhouse.io/<token>`` URLs, then hit the
-Greenhouse public API to keep only ones with real published jobs. The frontend can
-show a preview so the user picks which boards to actually add.
+Supports both Greenhouse (``boards.greenhouse.io/<token>``) and Ashby
+(``jobs.ashbyhq.com/<orgId>``) URLs. The user pastes anything — Google results,
+LinkedIn posts, articles, their own list — and we pull out matching URLs, then
+hit each provider's public API to keep only ones with real published jobs. The
+frontend previews the survivors so the user picks which boards to actually add.
 
-An optional auto-search path is layered on top: when an Anthropic API key is
-configured we can also call Claude with its built-in web-search tool to *find*
-new URLs from a natural-language query. If the key is missing the extraction path
-still works — just paste from any source.
+An optional auto-search path is layered on top: when a search-capable key is
+configured (Tavily preferred, then Gemini/Anthropic web search), we can also
+call it to *find* new URLs from a natural-language query. If none of those
+keys are set, the paste-text path still works.
 """
 from __future__ import annotations
 
-import concurrent.futures
 import os
-import re
-from dataclasses import dataclass
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.discovery.candidate_extraction import (
+    Candidate,
+    TokenMatch,
+    extract_tokens,
+    validate_candidates,
+)
 from app.domain.models import JobSource
 
 router = APIRouter(prefix="/discover", tags=["discover"])
-
-_TOKEN_RE = re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9\-]+)")
-
-
-@dataclass
-class Candidate:
-    token: str
-    name: str
-    job_count: int
 
 
 class ExtractRequest(BaseModel):
@@ -47,6 +41,7 @@ class SearchRequest(BaseModel):
 
 
 class DiscoverCandidate(BaseModel):
+    provider: str
     token: str
     company_name: str
     source_url: str
@@ -56,72 +51,43 @@ class DiscoverCandidate(BaseModel):
 
 class DiscoverResponse(BaseModel):
     candidates: list[DiscoverCandidate]
-    total_tokens_seen: int  # how many unique tokens were extracted before validation
-    filtered_out: int  # how many had 0 jobs or 404'd
+    total_tokens_seen: int  # unique tokens found before validation
+    filtered_out: int  # tokens that had 0 jobs or 404'd
 
 
-def _existing_tokens(db: Session) -> set[str]:
-    return {
-        row.source_identifier
-        for row in db.scalars(
-            select(JobSource).where(JobSource.provider == "greenhouse")
-        )
-    }
+def _existing_by_provider(db: Session) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for row in db.scalars(select(JobSource)):
+        out.setdefault(row.provider, set()).add(row.source_identifier)
+    return out
 
 
-def _validate(token: str) -> Candidate | None:
-    try:
-        r = httpx.get(
-            f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
-            timeout=6.0,
-        )
-    except httpx.HTTPError:
-        return None
-    if r.status_code != 200:
-        return None
-    try:
-        data = r.json()
-    except ValueError:
-        return None
-    jobs = data.get("jobs", [])
-    if not jobs:
-        return None
-    company_name = jobs[0].get("company_name") or token
-    return Candidate(token=token, name=company_name, job_count=len(jobs))
-
-
-def _validate_and_shape(tokens: set[str], existing: set[str]) -> DiscoverResponse:
-    if not tokens:
-        return DiscoverResponse(candidates=[], total_tokens_seen=0, filtered_out=0)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as pool:
-        results = list(pool.map(_validate, tokens))
-
-    valid = [c for c in results if c is not None]
-    valid.sort(key=lambda c: c.job_count, reverse=True)
-
-    candidates = [
-        DiscoverCandidate(
-            token=c.token,
-            company_name=c.name,
-            source_url=f"https://boards.greenhouse.io/{c.token}",
-            job_count=c.job_count,
-            already_registered=c.token in existing,
-        )
-        for c in valid
-    ]
+def _shape(candidates: list[Candidate], matches: set[TokenMatch], existing: dict[str, set[str]]) -> DiscoverResponse:
+    # Rank fatter boards first so the user sees the highest-signal rows above the fold.
+    candidates.sort(key=lambda c: c.job_count, reverse=True)
     return DiscoverResponse(
-        candidates=candidates,
-        total_tokens_seen=len(tokens),
-        filtered_out=len(tokens) - len(valid),
+        candidates=[
+            DiscoverCandidate(
+                provider=c.provider,
+                token=c.token,
+                company_name=c.name,
+                source_url=c.source_url,
+                job_count=c.job_count,
+                already_registered=c.token in existing.get(c.provider, set()),
+            )
+            for c in candidates
+        ],
+        total_tokens_seen=len(matches),
+        filtered_out=len(matches) - len(candidates),
     )
 
 
 @router.post("/extract", response_model=DiscoverResponse)
 def extract(payload: ExtractRequest, db: Session = Depends(get_db)) -> DiscoverResponse:
-    """Pull Greenhouse tokens from arbitrary pasted text and validate them."""
-    tokens = set(_TOKEN_RE.findall(payload.text or ""))
-    return _validate_and_shape(tokens, _existing_tokens(db))
+    """Pull provider-specific tokens from pasted text and validate them."""
+    matches = extract_tokens(payload.text or "")
+    candidates = validate_candidates(matches)
+    return _shape(candidates, matches, _existing_by_provider(db))
 
 
 class RunNowResponse(BaseModel):
@@ -136,11 +102,7 @@ class RunNowResponse(BaseModel):
 
 @router.post("/run-now", response_model=RunNowResponse)
 def run_auto_discover_now() -> RunNowResponse:
-    """Trigger the scheduled auto-discover task on demand and return a summary.
-
-    Runs synchronously in the request so the button click gets real feedback. Same code
-    path the cron job uses, so behavior stays consistent.
-    """
+    """Trigger the scheduled auto-discover task on demand and return a summary."""
     from app.scheduling.discover_task import run_auto_discover
 
     if not any(
@@ -164,17 +126,11 @@ def run_auto_discover_now() -> RunNowResponse:
 
 @router.post("/search", response_model=DiscoverResponse)
 def search(payload: SearchRequest, db: Session = Depends(get_db)) -> DiscoverResponse:
-    """Find Greenhouse boards matching a query using Anthropic's web-search tool.
-
-    Requires ANTHROPIC_API_KEY. This is a convenience layer over /discover/extract —
-    Claude does the searching, we still validate every URL it surfaces against the
-    Greenhouse API before returning it, so hallucinated tokens get filtered out.
-    """
+    """Find candidate boards matching a query. Same fallback chain as the scheduled task."""
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=422, detail="Query cannot be empty.")
 
-    # Reuse the same provider fallback the scheduled auto-discover uses.
     from app.scheduling.discover_task import (
         _search_via_anthropic,
         _search_via_gemini,
@@ -196,5 +152,6 @@ def search(payload: SearchRequest, db: Session = Depends(get_db)) -> DiscoverRes
         )
         raise HTTPException(status_code=400, detail=detail)
 
-    tokens = set(_TOKEN_RE.findall(text_blob))
-    return _validate_and_shape(tokens, _existing_tokens(db))
+    matches = extract_tokens(text_blob)
+    candidates = validate_candidates(matches)
+    return _shape(candidates, matches, _existing_by_provider(db))

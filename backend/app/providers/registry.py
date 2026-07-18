@@ -1,8 +1,10 @@
+from app.providers.ashby.provider import AshbyProvider
 from app.providers.base import JobProvider
 from app.providers.greenhouse.provider import GreenhouseProvider
 
 _PROVIDERS: dict[str, JobProvider] = {
     "greenhouse": GreenhouseProvider(),
+    "ashby": AshbyProvider(),
 }
 
 

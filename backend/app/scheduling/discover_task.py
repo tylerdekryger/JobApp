@@ -1,4 +1,4 @@
-"""Rotating auto-discovery of new Greenhouse job boards.
+"""Rotating auto-discovery of new ATS job boards (Greenhouse + Ashby).
 
 Cycles through a diverse set of natural-language queries so over the course of a week
 or two we cover many industries and stages. Any new board that validates gets added
@@ -8,24 +8,24 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
 
 from app.db import SessionLocal
+from app.discovery.candidate_extraction import (
+    extract_tokens,
+    validate_candidates,
+)
 from app.discovery.source_detection import detect_source
 from app.domain.models import Company, JobSource
 from app.sync.sync_service import sync_source
 
 logger = logging.getLogger(__name__)
 
-_TOKEN_RE = re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9\-]+)")
-
 # Rotated one-per-run. Diverse across stage, industry, and geography so the crawl
-# widens naturally over time. Feel free to edit — the runtime rotates based on the
-# day-of-year so any change takes effect immediately.
+# widens naturally over time.
 QUERIES = [
     "climate energy startups series A",
     "healthtech remote series B",
@@ -65,15 +65,18 @@ class DiscoverStats:
     new_boards_added: int = 0
     jobs_added: int = 0
     added_tokens: list[str] = field(default_factory=list)
-    skipped_too_large: list[str] = field(default_factory=list)  # tokens skipped for job_count > cap
-    skipped: str | None = None  # populated when the whole run was skipped (e.g. no API key)
+    skipped_too_large: list[str] = field(default_factory=list)
+    skipped: str | None = None
 
 
-# Skip auto-adding any board bigger than this — the assumption is that giant boards
-# (>150 open roles) belong to well-known companies whose jobs cross-post everywhere,
-# so they add noise rather than uncovering hidden opportunities. Manual paste/single-add
-# is still available if you specifically want a big board.
+# Skip auto-adding any board bigger than this. Big boards belong to well-known
+# companies whose jobs cross-post everywhere, which adds noise. Manual paste/single-add
+# is still available if a specific big board is wanted.
 MAX_AUTO_ADD_JOB_COUNT = 150
+
+# Domains we know how to consume; Tavily narrows to these to avoid burning a query on
+# unrelated results.
+SEARCH_INCLUDE_DOMAINS = ["boards.greenhouse.io", "jobs.ashbyhq.com"]
 
 
 def _pick_query() -> str:
@@ -82,11 +85,7 @@ def _pick_query() -> str:
 
 
 def _search_via_tavily(query: str) -> tuple[str, str | None]:
-    """Query Tavily and return the raw JSON as text so the token regex can pick out URLs.
-
-    Free tier: 1,000 searches/month, no card required. Filters to boards.greenhouse.io
-    so we don't burn a call on unrelated results.
-    """
+    """Query Tavily; return the raw JSON as text so the extractor can pull URLs."""
     import httpx
 
     key = os.environ["TAVILY_API_KEY"]
@@ -94,10 +93,10 @@ def _search_via_tavily(query: str) -> tuple[str, str | None]:
         "https://api.tavily.com/search",
         json={
             "api_key": key,
-            "query": f"{query} careers hiring greenhouse job board",
+            "query": f"{query} careers hiring job board",
             "search_depth": "advanced",
             "max_results": 20,
-            "include_domains": ["boards.greenhouse.io"],
+            "include_domains": SEARCH_INCLUDE_DOMAINS,
         },
         timeout=30,
     )
@@ -107,18 +106,18 @@ def _search_via_tavily(query: str) -> tuple[str, str | None]:
         except ValueError:
             msg = r.text
         return "", f"Tavily API error ({r.status_code}): {str(msg)[:200]}"
-    # We return the full body as a string; the caller extracts tokens with a regex.
     return r.text, None
 
 
 def _search_via_gemini(query: str) -> tuple[str, str | None]:
     """Try Gemini's google_search grounding. Returns (text_blob, error_reason)."""
-    import httpx  # local import so the module imports cleanly at boot
+    import httpx
 
     key = os.environ["GEMINI_API_KEY"]
     prompt = (
-        f"Find at least 15 unique URLs of the form boards.greenhouse.io/<token> for "
-        f"{query}. Prefer smaller/less-known companies. Return URLs only, one per line."
+        f"Find at least 15 unique career-board URLs for {query}. Return URLs only, one per "
+        "line, matching either `boards.greenhouse.io/<token>` (Greenhouse) or "
+        "`jobs.ashbyhq.com/<orgId>` (Ashby). Prefer smaller/less-known companies."
     )
     r = httpx.post(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
@@ -150,9 +149,10 @@ def _search_via_anthropic(query: str) -> tuple[str, str | None]:
 
     client = Anthropic()
     prompt = (
-        f"Search the web for `site:boards.greenhouse.io {query}` and return every unique "
-        "boards.greenhouse.io/<token> URL you find in the results, one per line, nothing else. "
-        "Prefer smaller/less-known companies. Return at least 15 URLs if possible."
+        f"Search the web for career-board URLs matching `{query}`. Return every unique "
+        "`boards.greenhouse.io/<token>` (Greenhouse) or `jobs.ashbyhq.com/<orgId>` (Ashby) "
+        "URL you find, one per line, nothing else. Prefer smaller/less-known companies. "
+        "Return at least 15 URLs if possible."
     )
     try:
         msg = client.messages.create(
@@ -170,14 +170,57 @@ def _search_via_anthropic(query: str) -> tuple[str, str | None]:
     return text, None
 
 
-def run_auto_discover() -> DiscoverStats:
-    """One rotation-step of auto-discovery: search, validate, add new boards, sync each.
+def _existing_by_provider() -> dict[str, set[str]]:
+    session = SessionLocal()
+    try:
+        out: dict[str, set[str]] = {}
+        for row in session.scalars(select(JobSource)):
+            out.setdefault(row.provider, set()).add(row.source_identifier)
+        return out
+    finally:
+        session.close()
 
-    Prefers Gemini's google_search grounding (free-tier friendly for the LLM half, though
-    grounding itself requires a paid Google Cloud project). Falls back to Anthropic's
-    web_search tool if only ANTHROPIC_API_KEY is set. If neither succeeds, records the
-    error on the returned stats so the UI can surface it.
-    """
+
+def _register_and_sync(provider: str, token: str, source_url: str, display_name: str) -> tuple[int, bool]:
+    """Create a JobSource + run one sync. Returns (jobs_added, ok)."""
+    session = SessionLocal()
+    try:
+        detected = detect_source(source_url)
+        if detected is None:
+            return 0, False
+        company = session.scalar(select(Company).where(Company.name == display_name))
+        if company is None:
+            company = Company(name=display_name)
+            session.add(company)
+            session.flush()
+        source = JobSource(
+            company_id=company.id,
+            provider=detected.provider,
+            source_url=detected.source_url,
+            source_identifier=detected.source_identifier,
+            status="pending",
+        )
+        session.add(source)
+        session.commit()
+        source_id = source.id
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("auto-discover add %s/%s failed: %s", provider, token, exc)
+        session.close()
+        return 0, False
+
+    session = SessionLocal()
+    try:
+        result = sync_source(session, source_id)
+        return result.jobs_added, True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("auto-discover sync %s/%s failed: %s", provider, token, exc)
+        return 0, False
+    finally:
+        session.close()
+
+
+def run_auto_discover() -> DiscoverStats:
+    """One rotation-step: search, validate, filter by size, add new boards, sync each."""
     stats = DiscoverStats(query=_pick_query())
 
     has_tavily = bool(os.getenv("TAVILY_API_KEY", "").strip())
@@ -190,8 +233,6 @@ def run_auto_discover() -> DiscoverStats:
 
     logger.info("auto-discover starting query=%r", stats.query)
 
-    # Prefer Tavily (free, no card, purpose-built for web search); fall back to LLM
-    # providers with search grounding if Tavily isn't configured or errors out.
     providers: list[tuple[str, callable]] = []
     if has_tavily:
         providers.append(("tavily", _search_via_tavily))
@@ -213,95 +254,44 @@ def run_auto_discover() -> DiscoverStats:
     if not text_blob:
         stats.skipped = (
             f"web search unavailable ({last_error}). "
-            "Gemini's Google Search grounding requires a paid Cloud project; "
-            "use the paste-mode Discover section on /sources instead."
+            "Use the paste-mode Discover section on /sources instead."
         )
         logger.info("auto-discover: %s", stats.skipped)
         return stats
 
-    tokens = set(_TOKEN_RE.findall(text_blob))
-    stats.tokens_found = len(tokens)
-    if not tokens:
+    matches = extract_tokens(text_blob)
+    stats.tokens_found = len(matches)
+    if not matches:
         logger.info("auto-discover found no tokens for query=%r", stats.query)
         return stats
 
-    session = SessionLocal()
-    try:
-        existing = {
-            row.source_identifier for row in session.scalars(
-                select(JobSource).where(JobSource.provider == "greenhouse")
-            )
-        }
-        new_tokens = tokens - existing
-        logger.info(
-            "auto-discover found %d tokens (%d new) for query=%r",
-            len(tokens), len(new_tokens), stats.query,
-        )
-    finally:
-        session.close()
+    existing = _existing_by_provider()
+    new_matches = [m for m in matches if m.token not in existing.get(m.provider, set())]
+    logger.info(
+        "auto-discover found %d tokens (%d new) for query=%r",
+        len(matches), len(new_matches), stats.query,
+    )
 
-    # Each add + sync gets its own session so a failure on one doesn't poison the batch.
-    for token in new_tokens:
-        # Pre-check the board's size before committing to an add + sync. Skip anything
-        # bigger than MAX_AUTO_ADD_JOB_COUNT (assumed cross-posted noise from big co's).
-        try:
-            import httpx
-            r = httpx.get(
-                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
-                timeout=6.0,
-            )
-            job_count = len(r.json().get("jobs", [])) if r.status_code == 200 else None
-        except Exception:  # noqa: BLE001
-            job_count = None
-        if job_count is None:
-            continue  # unreachable board; skip silently
-        if job_count > MAX_AUTO_ADD_JOB_COUNT:
-            stats.skipped_too_large.append(f"{token} ({job_count})")
-            logger.info("auto-discover skipping token=%s size=%d (> %d)", token, job_count, MAX_AUTO_ADD_JOB_COUNT)
-            continue
-
-        session = SessionLocal()
-        try:
-            url = f"https://boards.greenhouse.io/{token}"
-            detected = detect_source(url)
-            if detected is None:
-                continue
-            company_name = detected.source_identifier.replace("-", " ").title()
-            company = session.scalar(select(Company).where(Company.name == company_name))
-            if company is None:
-                company = Company(name=company_name)
-                session.add(company)
-                session.flush()
-            source = JobSource(
-                company_id=company.id,
-                provider=detected.provider,
-                source_url=detected.source_url,
-                source_identifier=detected.source_identifier,
-                status="pending",
-            )
-            session.add(source)
-            session.commit()
-            source_id = source.id
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("auto-discover add token=%s failed: %s", token, exc)
-            session.close()
-            continue
-
-        # Sync in a fresh session so the source row is committed and visible.
-        session = SessionLocal()
-        try:
-            result = sync_source(session, source_id)
-            stats.new_boards_added += 1
-            stats.jobs_added += result.jobs_added
-            stats.added_tokens.append(token)
+    # Validate size + name for each new candidate in parallel; discard anything too large.
+    candidates = validate_candidates(set(new_matches))
+    for cand in candidates:
+        if cand.job_count > MAX_AUTO_ADD_JOB_COUNT:
+            stats.skipped_too_large.append(f"{cand.token} ({cand.job_count})")
             logger.info(
-                "auto-discover added token=%s jobs_added=%s",
-                token, result.jobs_added,
+                "auto-discover skipping %s/%s size=%d (> %d)",
+                cand.provider, cand.token, cand.job_count, MAX_AUTO_ADD_JOB_COUNT,
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("auto-discover sync token=%s failed: %s", token, exc)
-        finally:
-            session.close()
+            continue
+
+        jobs_added, ok = _register_and_sync(cand.provider, cand.token, cand.source_url, cand.name)
+        if ok:
+            stats.new_boards_added += 1
+            stats.jobs_added += jobs_added
+            stats.added_tokens.append(f"{cand.provider}:{cand.token}")
+            logger.info(
+                "auto-discover added %s/%s jobs_added=%s",
+                cand.provider, cand.token, jobs_added,
+            )
 
     logger.info(
         "auto-discover finished query=%r new_boards_added=%d jobs_added=%d",
