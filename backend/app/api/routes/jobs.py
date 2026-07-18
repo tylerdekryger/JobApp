@@ -128,6 +128,10 @@ def list_jobs(
     posted_since_days: int | None = Query(
         default=None, gt=0, le=365, description="Only jobs first seen within the last N days"
     ),
+    sort: str = Query(
+        default="added_desc",
+        description="added_desc|added_asc|posted_desc|posted_asc",
+    ),
     limit: int = Query(default=25, le=200, gt=0),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -149,13 +153,28 @@ def list_jobs(
         stmt = stmt.where(condition)
         count_stmt = count_stmt.where(condition)
 
+    # Safety-net age filter: hide anything the source reports as posted more than 30 days ago
+    # even if the row still lives in the DB from an earlier sync. Jobs with no posted_at pass.
+    age_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    age_filter = or_(Job.posted_at.is_(None), Job.posted_at >= age_cutoff)
+    stmt = stmt.where(age_filter)
+    count_stmt = count_stmt.where(age_filter)
+
     total = db.scalar(count_stmt) or 0
-    # Reposted jobs float to the top of their "seen" batch; otherwise sort by when we discovered
-    # the job, tiebroken by the posting's own posted_at so a first-sync batch reads chronologically.
-    latest_seen = func.coalesce(Job.reopened_at, Job.first_seen_at)
+
+    # Sort selection. "added" uses the discovery/reopen date; "posted" uses the posting's own date.
+    added_col = func.coalesce(Job.reopened_at, Job.first_seen_at)
+    tiebreak = Job.posted_at.desc().nulls_last()
+    order_clauses = {
+        "added_desc": (added_col.desc(), tiebreak),
+        "added_asc": (added_col.asc(), Job.posted_at.asc().nulls_last()),
+        "posted_desc": (Job.posted_at.desc().nulls_last(), added_col.desc()),
+        "posted_asc": (Job.posted_at.asc().nulls_last(), added_col.desc()),
+    }.get(sort, (added_col.desc(), tiebreak))
+
     jobs = (
         db.scalars(
-            stmt.order_by(latest_seen.desc(), Job.posted_at.desc().nulls_last())
+            stmt.order_by(*order_clauses)
             .limit(limit)
             .offset(offset)
         )

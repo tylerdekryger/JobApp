@@ -1,12 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import { analyzeJob, type Job } from "@/lib/api";
 
+type SortKey = "added_desc" | "added_asc" | "posted_desc" | "posted_asc";
+
 interface Props {
   jobs: Job[];
+  currentSort: SortKey;
 }
 
 function toSnippet(html: string, max = 220): string {
@@ -43,8 +47,30 @@ type AnalysisState =
   | { kind: "done"; fit: string; gap: string }
   | { kind: "error"; message: string };
 
-export function JobTable({ jobs }: Props) {
+export function JobTable({ jobs, currentSort }: Props) {
+  const params = useSearchParams();
   const [analyses, setAnalyses] = useState<Record<number, AnalysisState>>({});
+
+  function sortLink(column: "added" | "posted"): { href: string; indicator: string; active: boolean } {
+    const isActive = currentSort.startsWith(column);
+    // Toggle direction if already active on this column; otherwise start descending (recent-first).
+    let next: SortKey;
+    if (!isActive) {
+      next = (column === "added" ? "added_desc" : "posted_desc");
+    } else {
+      next = currentSort.endsWith("_desc")
+        ? ((column + "_asc") as SortKey)
+        : ((column + "_desc") as SortKey);
+    }
+    const usp = new URLSearchParams(params.toString());
+    usp.set("sort", next);
+    usp.delete("offset");
+    const indicator = isActive ? (currentSort.endsWith("_desc") ? " ↓" : " ↑") : "";
+    return { href: `/?${usp.toString()}`, indicator, active: isActive };
+  }
+
+  const addedSort = sortLink("added");
+  const postedSort = sortLink("posted");
 
   async function runAnalysis(jobId: number) {
     setAnalyses((s) => ({ ...s, [jobId]: { kind: "loading" } }));
@@ -100,8 +126,16 @@ export function JobTable({ jobs }: Props) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr style={{ background: "var(--bg)" }}>
-              <Th>Added</Th>
-              <Th>Posted</Th>
+              <Th>
+                <Link href={addedSort.href} className="hover:underline" style={{ color: addedSort.active ? "var(--accent)" : "inherit" }}>
+                  Added{addedSort.indicator}
+                </Link>
+              </Th>
+              <Th>
+                <Link href={postedSort.href} className="hover:underline" style={{ color: postedSort.active ? "var(--accent)" : "inherit" }}>
+                  Posted{postedSort.indicator}
+                </Link>
+              </Th>
               <Th>Company</Th>
               <Th>Role</Th>
               <Th>Location</Th>

@@ -2,12 +2,15 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { JobTable } from "@/components/JobTable";
+import { Pagination } from "@/components/Pagination";
 import { SearchControls } from "@/components/SearchControls";
-import { listCompanies, searchJobs } from "@/lib/api";
+import { searchJobs } from "@/lib/api";
 import type { JobSearchParams } from "@/lib/api";
 
 // Only remote-eligible roles are ever surfaced. Onsite and hybrid jobs never appear in results.
 const ALWAYS_ON_REMOTE_TYPES = "remote,unknown";
+const PAGE_SIZE = 50;
+const VALID_SORTS = new Set(["added_desc", "added_asc", "posted_desc", "posted_asc"]);
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +46,7 @@ function ActiveFilterChip({ label, removeHref }: { label: string; removeHref: st
 function buildRemoveHref(sp: Record<string, string | string[] | undefined>, key: string): string {
   const usp = new URLSearchParams();
   for (const [k, v] of Object.entries(sp)) {
-    if (k === key) continue;
+    if (k === key || k === "offset") continue;
     const val = pickString(v);
     if (val) usp.set(k, val);
   }
@@ -53,37 +56,34 @@ function buildRemoveHref(sp: Record<string, string | string[] | undefined>, key:
 
 export default async function HomePage({ searchParams }: PageProps) {
   const sp = await searchParams;
+  const rawSort = pickString(sp.sort) ?? "added_desc";
+  const sort = (VALID_SORTS.has(rawSort) ? rawSort : "added_desc") as
+    | "added_desc"
+    | "added_asc"
+    | "posted_desc"
+    | "posted_asc";
+  const offset = pickNumber(sp.offset) ?? 0;
   const params: JobSearchParams = {
     q: pickString(sp.q),
-    location: pickString(sp.location),
-    department: pickString(sp.department),
     remote_type: ALWAYS_ON_REMOTE_TYPES,
     title_contains: pickString(sp.title_contains),
-    company_id: pickNumber(sp.company_id),
-    posted_since_days: pickNumber(sp.posted_since_days),
-    limit: 25,
+    sort,
+    limit: PAGE_SIZE,
+    offset,
   };
 
-  let jobs, companies;
+  let jobs;
   let error: string | null = null;
   try {
-    [jobs, companies] = await Promise.all([searchJobs(params), listCompanies()]);
+    jobs = await searchJobs(params);
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  const companiesById: Record<string, string> = {};
-  for (const c of companies?.items ?? []) {
-    companiesById[String(c.id)] = c.name;
-  }
-
-  const activeCompanyName =
-    params.company_id !== undefined ? companiesById[String(params.company_id)] : undefined;
-
   return (
     <div className="space-y-6">
       <Suspense fallback={<div className="card p-4" style={{ color: "var(--muted)" }}>Loading filters…</div>}>
-        <SearchControls companies={companies?.items ?? []} />
+        <SearchControls />
       </Suspense>
 
       {error && (
@@ -97,26 +97,14 @@ export default async function HomePage({ searchParams }: PageProps) {
         <div className="space-y-4">
           <div className="flex items-baseline justify-between gap-3 flex-wrap">
             <p className="text-sm" style={{ color: "var(--muted)" }}>
-              {jobs.total.toLocaleString()} remote-eligible job{jobs.total === 1 ? "" : "s"} match
-              {params.q ? ` "${params.q}"` : ""}
+              {jobs.total.toLocaleString()} remote-eligible job{jobs.total === 1 ? "" : "s"} posted in the last 30 days
+              {params.q ? ` matching "${params.q}"` : ""}
             </p>
             <div className="flex flex-wrap gap-2">
-              {params.location && (
-                <ActiveFilterChip
-                  label={`Location: ${params.location}`}
-                  removeHref={buildRemoveHref(sp, "location")}
-                />
-              )}
               {params.title_contains && (
                 <ActiveFilterChip
                   label={`Role: ${params.title_contains}`}
                   removeHref={buildRemoveHref(sp, "title_contains")}
-                />
-              )}
-              {activeCompanyName && (
-                <ActiveFilterChip
-                  label={`Company: ${activeCompanyName}`}
-                  removeHref={buildRemoveHref(sp, "company_id")}
                 />
               )}
             </div>
@@ -130,7 +118,12 @@ export default async function HomePage({ searchParams }: PageProps) {
               .
             </div>
           ) : (
-            <JobTable jobs={jobs.items} />
+            <>
+              <JobTable jobs={jobs.items} currentSort={sort} />
+              <Suspense fallback={null}>
+                <Pagination total={jobs.total} limit={jobs.limit} offset={jobs.offset} />
+              </Suspense>
+            </>
           )}
         </div>
       )}

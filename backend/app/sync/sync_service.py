@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +12,10 @@ from app.normalization.text import detect_boilerplate_prefix
 from app.providers.registry import get_provider
 
 logger = get_logger(__name__)
+
+# Skip jobs older than this at ingest time so the DB doesn't accumulate stale roles.
+# Postings without a posted_at date are kept (we have no signal to filter on).
+MAX_JOB_AGE = timedelta(days=30)
 
 
 @dataclass
@@ -44,9 +48,14 @@ def sync_source(session: Session, source_id: int) -> SyncResult:
 
     seen_external_ids: set[str] = set()
     added = updated = 0
+    age_cutoff = started_at - MAX_JOB_AGE
 
     for raw_job in raw_jobs:
         normalized = provider.normalize(raw_job, source.company.name)
+        # Skip jobs the source itself reports as older than MAX_JOB_AGE. Jobs whose posted_at
+        # can't be parsed are kept — better to include-with-unknown-date than drop silently.
+        if normalized.posted_at is not None and normalized.posted_at < age_cutoff:
+            continue
         seen_external_ids.add(normalized.source_job_id)
         content_hash = compute_content_hash(normalized)
         _, outcome = upsert_job(

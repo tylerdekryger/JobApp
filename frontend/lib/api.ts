@@ -55,6 +55,7 @@ export interface JobSearchParams {
   title_contains?: string;
   company_id?: number;
   posted_since_days?: number;
+  sort?: string; // added_desc | added_asc | posted_desc | posted_asc
   limit?: number;
   offset?: number;
 }
