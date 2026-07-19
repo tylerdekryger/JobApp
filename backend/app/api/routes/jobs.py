@@ -8,10 +8,18 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, not_
 
 from app.analysis.fit import AnalysisConfigError, analyze_job_against_resume
+from app.analysis.market_check import MarketCheckError, market_check
 from app.api.deps import get_db
 from app.api.routes.profile import get_or_create_profile
 from app.domain.models import Company, Job
-from app.domain.schemas import AnalyzeJobResponse, FacetsResponse, FacetValue, JobListResponse, JobResponse
+from app.domain.schemas import (
+    AnalyzeJobResponse,
+    FacetsResponse,
+    FacetValue,
+    JobListResponse,
+    JobResponse,
+    MarketCheckResponse,
+)
 from app.normalization.text import (
     NON_US_LOCATION_INDICATORS,
     US_LOCATION_INDICATORS,
@@ -127,6 +135,9 @@ def _job_to_response(job: Job, *, current_resume_hash: str = "") -> JobResponse:
         gap_summary=job.gap_summary,
         analyzed_at=job.analyzed_at,
         analysis_is_stale=stale,
+        market_check_summary=job.market_check_summary,
+        market_check_url=job.market_check_url,
+        market_check_at=job.market_check_at,
     )
 
 
@@ -340,4 +351,33 @@ def analyze_job(job_id: int, db: Session = Depends(get_db)) -> AnalyzeJobRespons
         fit_summary=job.fit_summary,
         gap_summary=job.gap_summary,
         analyzed_at=job.analyzed_at,
+    )
+
+
+@router.post("/{job_id}/market-check", response_model=MarketCheckResponse)
+def market_check_job(job_id: int, db: Session = Depends(get_db)) -> MarketCheckResponse:
+    """Cross-reference LinkedIn to detect long-open / reposted jobs whose Ashby date is misleading."""
+    job = db.scalar(
+        select(Job).options(joinedload(Job.company)).where(Job.id == job_id)
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    try:
+        result = market_check(
+            title=job.title,
+            company=(job.company.name if job.company else "the company"),
+        )
+    except MarketCheckError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    job.market_check_summary = result.summary
+    job.market_check_url = result.linkedin_url
+    job.market_check_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return MarketCheckResponse(
+        job_id=job.id,
+        summary=job.market_check_summary or "",
+        linkedin_url=job.market_check_url,
+        checked_at=job.market_check_at,
     )

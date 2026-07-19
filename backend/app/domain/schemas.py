@@ -88,6 +88,9 @@ class JobResponse(BaseModel):
     gap_summary: str | None = None
     analyzed_at: datetime | None = None
     analysis_is_stale: bool = False  # true when a newer resume version invalidates cached summary
+    market_check_summary: str | None = None
+    market_check_url: str | None = None
+    market_check_at: datetime | None = None
 
 
 class JobListResponse(BaseModel):
@@ -137,3 +140,10 @@ class AnalyzeJobResponse(BaseModel):
     fit_summary: str
     gap_summary: str
     analyzed_at: datetime
+
+
+class MarketCheckResponse(BaseModel):
+    job_id: int
+    summary: str
+    linkedin_url: str | None
+    checked_at: datetime

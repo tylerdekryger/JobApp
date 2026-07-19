@@ -78,6 +78,12 @@ class Job(Base):
     gap_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     analysis_resume_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Cross-referenced context from external sources (LinkedIn) — helps flag reposted /
+    # long-open roles whose Ashby "publishedAt" was bumped but which have been actively
+    # circulating for months.
+    market_check_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    market_check_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    market_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

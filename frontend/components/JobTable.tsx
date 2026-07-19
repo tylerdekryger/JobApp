@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 
-import { analyzeJob, type Job } from "@/lib/api";
+import { analyzeJob, marketCheckJob, type Job } from "@/lib/api";
 
 type SortKey = "added_desc" | "added_asc" | "posted_desc" | "posted_asc";
 
@@ -82,9 +82,31 @@ type AnalysisState =
   | { kind: "done"; fit: string; gap: string }
   | { kind: "error"; message: string };
 
+type MarketState =
+  | { kind: "loading" }
+  | { kind: "done"; summary: string; linkedin_url: string | null }
+  | { kind: "error"; message: string };
+
 export function JobTable({ jobs, currentSort }: Props) {
   const params = useSearchParams();
   const [analyses, setAnalyses] = useState<Record<number, AnalysisState>>({});
+  const [marketChecks, setMarketChecks] = useState<Record<number, MarketState>>({});
+
+  async function runMarketCheck(jobId: number) {
+    setMarketChecks((s) => ({ ...s, [jobId]: { kind: "loading" } }));
+    try {
+      const r = await marketCheckJob(jobId);
+      setMarketChecks((s) => ({
+        ...s,
+        [jobId]: { kind: "done", summary: r.summary, linkedin_url: r.linkedin_url },
+      }));
+    } catch (e) {
+      setMarketChecks((s) => ({
+        ...s,
+        [jobId]: { kind: "error", message: String(e).replace(/^Error:\s*/, "") },
+      }));
+    }
+  }
 
   function sortLink(column: "added" | "posted"): { href: string; indicator: string; active: boolean } {
     const isActive = currentSort.startsWith(column);
@@ -176,6 +198,7 @@ export function JobTable({ jobs, currentSort }: Props) {
               <Th>Location</Th>
               <Th>Remote</Th>
               <Th>Comp</Th>
+              <Th className="min-w-[220px]">Market check</Th>
               <Th className="min-w-[160px]">Why kept</Th>
               <Th>Link</Th>
               <Th className="min-w-[220px]">Overview</Th>
@@ -240,6 +263,14 @@ export function JobTable({ jobs, currentSort }: Props) {
                     {formatCompensation(job.salary_min, job.salary_max, job.salary_currency) || (
                       <span style={{ color: "var(--border)" }}>—</span>
                     )}
+                  </Td>
+                  <Td className="text-xs" style={{ color: "var(--muted)" }}>
+                    <MarketCell
+                      state={marketChecks[job.id]}
+                      cached={job.market_check_summary}
+                      cachedUrl={job.market_check_url}
+                      onCheck={() => runMarketCheck(job.id)}
+                    />
                   </Td>
                   <Td className="text-xs" style={{ color: "var(--muted)" }}>
                     {inclusionReason(job.location, job.remote_type) || (
@@ -321,6 +352,58 @@ function RemoteDot({ type }: { type: string | null }) {
     />
   );
 }
+
+function MarketCell({
+  state,
+  cached,
+  cachedUrl,
+  onCheck,
+}: {
+  state: MarketState | undefined;
+  cached: string | null;
+  cachedUrl: string | null;
+  onCheck: () => void;
+}) {
+  if (state?.kind === "loading") return <span className="text-xs">Checking…</span>;
+  if (state?.kind === "error") {
+    return (
+      <div className="text-xs" style={{ color: "#dc2626" }}>
+        {state.message}
+        <button onClick={onCheck} className="ml-2 underline">retry</button>
+      </div>
+    );
+  }
+  const summary = state?.kind === "done" ? state.summary : cached;
+  const url = state?.kind === "done" ? state.linkedin_url : cachedUrl;
+  if (!summary) {
+    return (
+      <button
+        onClick={onCheck}
+        className="rounded border px-2 py-1 text-xs font-medium hover:opacity-90"
+        style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+      >
+        Check LinkedIn
+      </button>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <p className="leading-snug">{summary}</p>
+      {url && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline"
+          style={{ color: "var(--accent)" }}
+        >
+          Open LinkedIn ↗
+        </a>
+      )}
+    </div>
+  );
+}
+
 
 function AnalysisCell({
   state,

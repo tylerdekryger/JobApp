@@ -27,6 +27,9 @@ export interface Job {
   gap_summary: string | null;
   analyzed_at: string | null;
   analysis_is_stale: boolean;
+  market_check_summary: string | null;
+  market_check_url: string | null;
+  market_check_at: string | null;
 }
 
 export interface JobListResponse {
@@ -200,6 +203,22 @@ export async function analyzeJob(jobId: number): Promise<AnalyzeJobResponse> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Failed to analyze job: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface MarketCheckResponse {
+  job_id: number;
+  summary: string;
+  linkedin_url: string | null;
+  checked_at: string;
+}
+
+export async function marketCheckJob(jobId: number): Promise<MarketCheckResponse> {
+  const res = await fetch(`${API_URL}/jobs/${jobId}/market-check`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Failed to market-check job: ${res.status}`);
   }
   return res.json();
 }
