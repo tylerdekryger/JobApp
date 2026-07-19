@@ -95,6 +95,40 @@ NON_US_LOCATION_INDICATORS = (
 )
 
 
+def location_pins_a_city(location: str | None) -> bool:
+    """Return True when the location string names a specific city or address.
+
+    Used to override Ashby's over-broad ``isRemote`` flag: a job with location
+    ``"Mountain View, CA"`` and ``isRemote:true`` almost always means "hybrid /
+    remote from HQ" — not fully remote. If we can see a city in the string,
+    reclassify to hybrid so the remote-only filter drops it.
+
+    Returns False for empty/null strings, anything containing "remote", bare
+    country-or-region markers ("United States", "Global", "EU"), and multi-
+    location strings (which usually include at least one remote-friendly entry).
+    """
+    if not location:
+        return False
+    lc = location.strip().lower()
+    if not lc:
+        return False
+    if "remote" in lc:
+        return False
+    country_or_region = {
+        "united states", "usa", "us", "u.s.", "u.s.a.",
+        "global", "worldwide", "anywhere", "any location",
+        "north america", "emea", "apac", "latam",
+        "united kingdom", "uk",
+        "european union", "eu",
+    }
+    if lc in country_or_region:
+        return False
+    # Multi-location strings — some entry is likely a remote option.
+    if any(sep in lc for sep in (";", "|", " or ", " / ", ", or ")):
+        return False
+    return True
+
+
 def is_us_eligible(location: str | None) -> bool:
     """Best-effort check: is this location string plausibly US-based?
 

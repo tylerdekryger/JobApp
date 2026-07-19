@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from app.normalization.text import clean_department, detect_remote_type
+from app.normalization.text import clean_department, detect_remote_type, location_pins_a_city
 from app.providers.ashby.client import AshbyClient
 from app.providers.base import JobProvider, NormalizedJob
 
@@ -76,12 +76,14 @@ class AshbyProvider(JobProvider):
         location = raw_job.get("location") or None
         description_html = raw_job.get("descriptionHtml") or ""
 
-        # Ashby's own isRemote flag is authoritative when present. Fall back to the text-based
-        # heuristic for hybrid/onsite/unknown so the whole app stays consistent with Greenhouse
-        # jobs (remote/hybrid/onsite/unknown, four-valued).
+        # Ashby's isRemote flag is over-eager: it fires for "remote-flexible" hybrid roles
+        # tied to a specific HQ (e.g. isRemote=true + location="Mountain View, CA"). When
+        # the location pins a specific city, downgrade to hybrid so the default remote-only
+        # view drops it. When the flag is False, use the text heuristic to distinguish
+        # hybrid vs onsite.
         is_remote = raw_job.get("isRemote")
         if is_remote is True:
-            remote_type = "remote"
+            remote_type = "hybrid" if location_pins_a_city(location) else "remote"
         elif is_remote is False:
             heuristic = detect_remote_type(location, description_html)
             remote_type = heuristic if heuristic in {"hybrid", "onsite"} else "onsite"
