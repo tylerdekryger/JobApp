@@ -58,6 +58,102 @@ def _us_eligibility_condition() -> ColumnElement[bool]:
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+# --- boolean title-query parser ------------------------------------------------
+#
+# Grammar:
+#   expr   := or_expr
+#   or_expr  := and_expr (OR and_expr)*
+#   and_expr := atom    (AND atom)*
+#   atom     := TERM | '(' or_expr ')'
+#
+# Precedence: parens tightest, then AND, then OR (standard boolean).
+# TERM is any run of characters that isn't a paren or an UPPERCASE AND/OR operator.
+
+_TitleNode = tuple  # ('term', str) | ('and', list[_TitleNode]) | ('or', list[_TitleNode])
+
+
+def _tokenize_title_query(q: str) -> list[str]:
+    # Comma is OR shorthand.
+    q = re.sub(r"\s*,\s*", " OR ", q)
+    # Give parens their own whitespace so a plain split isolates them.
+    q = q.replace("(", " ( ").replace(")", " ) ")
+    parts = q.split()
+    tokens: list[str] = []
+    buffer: list[str] = []
+    for p in parts:
+        if p in ("AND", "OR", "(", ")"):
+            if buffer:
+                tokens.append(" ".join(buffer))
+                buffer = []
+            tokens.append(p)
+        else:
+            buffer.append(p)
+    if buffer:
+        tokens.append(" ".join(buffer))
+    return tokens
+
+
+def _parse_title_tokens(tokens: list[str]) -> _TitleNode:
+    """Recursive-descent parser over the token stream. Tolerant of malformed input:
+    unbalanced parens are treated as if closed at end of input."""
+    pos = [0]
+
+    def peek() -> str | None:
+        return tokens[pos[0]] if pos[0] < len(tokens) else None
+
+    def eat() -> str:
+        t = tokens[pos[0]]
+        pos[0] += 1
+        return t
+
+    def parse_or() -> _TitleNode:
+        first = parse_and()
+        items = [first]
+        while peek() == "OR":
+            eat()
+            items.append(parse_and())
+        return ("or", items) if len(items) > 1 else first
+
+    def parse_and() -> _TitleNode:
+        first = parse_atom()
+        items = [first]
+        while peek() == "AND":
+            eat()
+            items.append(parse_atom())
+        return ("and", items) if len(items) > 1 else first
+
+    def parse_atom() -> _TitleNode:
+        t = peek()
+        if t == "(":
+            eat()
+            node = parse_or()
+            if peek() == ")":
+                eat()
+            return node
+        # Bare term. If somehow we see an operator here (malformed), skip it and
+        # produce an empty match — better than crashing on user input.
+        if t in ("AND", "OR", ")") or t is None:
+            return ("term", "")
+        return ("term", eat())
+
+    return parse_or()
+
+
+def _tree_to_sql(node: _TitleNode) -> ColumnElement[bool]:
+    kind = node[0]
+    if kind == "term":
+        term = node[1].strip()
+        if not term:
+            # An empty term shouldn't restrict the query — use always-true.
+            return Job.title.is_not(None)
+        return Job.title.ilike(f"%{term}%")
+    if kind == "and":
+        return and_(*[_tree_to_sql(c) for c in node[1]])
+    if kind == "or":
+        return or_(*[_tree_to_sql(c) for c in node[1]])
+    raise ValueError(f"unknown node kind: {kind}")
+
+
 @dataclass
 class JobFilters:
     q: str | None
@@ -75,33 +171,26 @@ class JobFilters:
             return []
         return [v.strip() for v in self.remote_type.split(",") if v.strip()]
 
-    def _title_or_groups(self) -> list[list[str]]:
-        """Parse a boolean title query into groups of AND-terms joined by OR.
+    def _title_condition(self) -> ColumnElement[bool] | None:
+        """Parse a boolean title query into a SQL condition.
 
         Syntax:
             - UPPERCASE ``AND`` and ``OR`` are operators; AND binds tighter than OR.
-            - Commas are OR shorthand (backward compat with earlier comma-only syntax).
-            - Anything else (including lowercase ``and``/``or``) is part of a term.
+            - Parentheses group sub-expressions, e.g. ``A AND (B OR C)``.
+            - Commas are OR shorthand (backward compat).
+            - Everything else (including lowercase "and"/"or") is a literal term.
 
-        Examples::
-
-            "Customer Success AND Operation OR Analyst OR GTM"
-              → [["Customer Success", "Operation"], ["Analyst"], ["GTM"]]
-            "Manager, Customer Success"
-              → [["Manager"], ["Customer Success"]]
+        Returns ``None`` when the input is empty; otherwise a SQLAlchemy boolean expression
+        built from ``Job.title.ilike("%term%")`` combined with AND/OR/parens.
         """
         raw = (self.title_contains or "").strip()
         if not raw:
-            return []
-        # Comma → OR (preserves backward-compat behavior).
-        normalized = re.sub(r"\s*,\s*", " OR ", raw)
-        # Split on OR first (looser binding), then on AND within each group.
-        groups: list[list[str]] = []
-        for or_chunk in re.split(r"\s+OR\s+", normalized):
-            terms = [t.strip() for t in re.split(r"\s+AND\s+", or_chunk) if t.strip()]
-            if terms:
-                groups.append(terms)
-        return groups
+            return None
+        tokens = _tokenize_title_query(raw)
+        if not tokens:
+            return None
+        tree = _parse_title_tokens(tokens)
+        return _tree_to_sql(tree)
 
     def build_conditions(self) -> list[ColumnElement[bool]]:
         conditions: list[ColumnElement[bool]] = []
@@ -126,15 +215,9 @@ class JobFilters:
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
-        title_groups = self._title_or_groups()
-        if title_groups:
-            # Each inner group's terms are AND-ed (all must appear in the title);
-            # the outer list is OR-ed across groups.
-            per_group = [
-                and_(*[Job.title.ilike(f"%{term}%") for term in group])
-                for group in title_groups
-            ]
-            conditions.append(or_(*per_group))
+        title_cond = self._title_condition()
+        if title_cond is not None:
+            conditions.append(title_cond)
         if self.q:
             # Match against title only. Previously also matched description + company name,
             # which produced rows whose Role column didn't obviously contain the search term.

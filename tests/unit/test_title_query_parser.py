@@ -1,60 +1,71 @@
-"""Unit tests for the boolean AND/OR title-query parser on JobFilters."""
-from app.api.routes.jobs import JobFilters
+"""Unit tests for the boolean AND/OR/parens title-query parser."""
+from app.api.routes.jobs import _parse_title_tokens, _tokenize_title_query
 
 
-def _parse(q: str | None) -> list[list[str]]:
-    f = JobFilters(
-        q=None, location=None, department=None, remote_type=None,
-        title_contains=q, company_id=None, source_id=None, status=None,
-        posted_since_days=None,
-    )
-    return f._title_or_groups()
+def _render(node) -> str:
+    """Cheap pretty-printer so assertions read like the source query."""
+    kind = node[0]
+    if kind == "term":
+        return f"'{node[1]}'"
+    if kind == "and":
+        return "(" + " AND ".join(_render(c) for c in node[1]) + ")"
+    if kind == "or":
+        return "(" + " OR ".join(_render(c) for c in node[1]) + ")"
+    raise AssertionError(kind)
 
 
-def test_empty_and_none():
-    assert _parse(None) == []
-    assert _parse("") == []
-    assert _parse("   ") == []
+def _parse(q: str):
+    tokens = _tokenize_title_query(q)
+    return _parse_title_tokens(tokens)
 
 
 def test_single_term():
-    assert _parse("Manager") == [["Manager"]]
+    assert _render(_parse("Manager")) == "'Manager'"
 
 
 def test_multi_word_term_stays_together():
-    assert _parse("Customer Success") == [["Customer Success"]]
+    assert _render(_parse("Customer Success")) == "'Customer Success'"
+
+
+def test_or_two_terms():
+    assert _render(_parse("Manager OR Analyst")) == "('Manager' OR 'Analyst')"
 
 
 def test_comma_is_or_shorthand():
-    # Backward-compat with the previous comma-only syntax.
-    assert _parse("Manager, Customer Success") == [["Manager"], ["Customer Success"]]
-
-
-def test_explicit_or():
-    assert _parse("Manager OR Customer Success") == [["Manager"], ["Customer Success"]]
+    assert _render(_parse("Manager, Customer Success")) == "('Manager' OR 'Customer Success')"
 
 
 def test_and_binds_tighter_than_or():
-    # From the user's example.
-    assert _parse("Customer Success AND Operation OR Analyst OR GTM") == [
-        ["Customer Success", "Operation"],
-        ["Analyst"],
-        ["GTM"],
-    ]
+    # From the earlier user example — standard precedence.
+    got = _render(_parse("Customer Success AND Operation OR Analyst OR GTM"))
+    assert got == "(('Customer Success' AND 'Operation') OR 'Analyst' OR 'GTM')"
 
 
-def test_mixed_comma_and_boolean():
-    assert _parse("Manager AND Sales, Analyst") == [
-        ["Manager", "Sales"],
-        ["Analyst"],
-    ]
+def test_parens_override_precedence():
+    # The reported bug: user wants Customer Success required across the OR list.
+    got = _render(_parse("Customer Success AND (Manager OR Operation OR Analyst OR GTM OR Engineer)"))
+    assert got == "('Customer Success' AND ('Manager' OR 'Operation' OR 'Analyst' OR 'GTM' OR 'Engineer'))"
 
 
-def test_lowercase_and_or_are_literal():
-    # Only UPPERCASE AND/OR are operators; "and" in "Research and Development" is literal.
-    assert _parse("Research and Development") == [["Research and Development"]]
-    assert _parse("Sales or Marketing") == [["Sales or Marketing"]]
+def test_nested_parens():
+    got = _render(_parse("(A OR B) AND (C OR D)"))
+    assert got == "(('A' OR 'B') AND ('C' OR 'D'))"
 
 
-def test_extra_whitespace_is_tolerated():
-    assert _parse("  Manager   AND   Sales  ") == [["Manager", "Sales"]]
+def test_lowercase_and_or_stay_literal():
+    assert _render(_parse("Research and Development")) == "'Research and Development'"
+
+
+def test_unbalanced_close_paren_is_tolerated():
+    # Ignore the stray close-paren rather than crashing.
+    assert _render(_parse("Manager AND Analyst)")) == "('Manager' AND 'Analyst')"
+
+
+def test_unbalanced_open_paren_is_tolerated():
+    # A missing close-paren should still parse the rest of the expression.
+    assert _render(_parse("Manager AND (Analyst OR GTM")) == "('Manager' AND ('Analyst' OR 'GTM'))"
+
+
+def test_empty_returns_empty_tokens():
+    assert _tokenize_title_query("") == []
+    assert _tokenize_title_query("   ") == []

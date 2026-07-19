@@ -72,14 +72,14 @@ export function SearchControls({}: Props) {
         <span className="mb-1 font-medium" style={{ color: "var(--muted)" }}>
           Role keywords{" "}
           <span className="font-normal">
-            (UPPERCASE AND/OR — AND binds tighter; commas = OR)
+            (UPPERCASE AND/OR + parens; commas = OR)
           </span>
         </span>
         <input
           type="text"
           value={titleContains}
           onChange={(e) => setTitleContains(e.target.value)}
-          placeholder="e.g. Customer Success AND Operation OR Analyst OR GTM"
+          placeholder="e.g. Customer Success AND (Manager OR Analyst OR GTM)"
           className="rounded-lg border px-3 py-2 bg-transparent"
           style={{ borderColor: "var(--border)" }}
         />
