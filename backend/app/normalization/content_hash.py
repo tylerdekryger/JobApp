@@ -14,6 +14,7 @@ def compute_content_hash(job: NormalizedJob) -> str:
         job.title,
         job.description,
         job.location or "",
+        f"{job.salary_min or ''}|{job.salary_max or ''}|{job.salary_currency or ''}",
     ]
     payload = "\x1f".join(parts).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

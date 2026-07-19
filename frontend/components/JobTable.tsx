@@ -44,6 +44,30 @@ function isoToShort(iso: string | null): string {
 // Explain why a job made it through the "remote-eligible" filter when its location doesn't
 // obviously say Remote. Returns an empty string for the obvious cases (location contains
 // "remote"), so the cell renders blank and only the ambiguous rows are annotated.
+function formatCompensation(min: number | null, max: number | null, currency: string | null): string {
+  if (min == null && max == null) return "";
+  const cur = (currency || "USD").toUpperCase();
+  const sym = cur === "USD" ? "$" : cur === "EUR" ? "€" : cur === "GBP" ? "£" : "";
+  const suffix = sym ? "" : ` ${cur}`;
+  const fmt = (n: number) => {
+    if (n >= 1000) {
+      const k = Math.round(n / 1000);
+      return `${sym}${k}K`;
+    }
+    return `${sym}${Math.round(n)}`;
+  };
+  if (min != null && max != null && min !== max) return `${fmt(min)}–${fmt(max)}${suffix}`;
+  const v = (min ?? max) as number;
+  return `${fmt(v)}${suffix}`;
+}
+
+const REMOTE_LABELS: Record<string, string> = {
+  remote: "Remote",
+  hybrid: "Hybrid",
+  onsite: "Onsite",
+  unknown: "Unknown",
+};
+
 function inclusionReason(location: string | null, remoteType: string | null): string {
   const loc = (location ?? "").toLowerCase();
   if (loc.includes("remote")) return "";
@@ -150,6 +174,8 @@ export function JobTable({ jobs, currentSort }: Props) {
               <Th>Company</Th>
               <Th>Role</Th>
               <Th>Location</Th>
+              <Th>Remote</Th>
+              <Th>Comp</Th>
               <Th className="min-w-[160px]">Why kept</Th>
               <Th>Link</Th>
               <Th className="min-w-[220px]">Overview</Th>
@@ -202,10 +228,18 @@ export function JobTable({ jobs, currentSort }: Props) {
                     )}
                   </Td>
                   <Td className="max-w-[200px]">
-                    <div className="flex items-center gap-1.5">
+                    {job.location ? job.location : <span style={{ color: "var(--border)" }}>—</span>}
+                  </Td>
+                  <Td className="whitespace-nowrap">
+                    <div className="flex items-center gap-1.5 text-xs">
                       <RemoteDot type={job.remote_type} />
-                      <span>{job.location ?? "—"}</span>
+                      <span>{REMOTE_LABELS[job.remote_type ?? "unknown"] ?? "—"}</span>
                     </div>
+                  </Td>
+                  <Td className="whitespace-nowrap text-xs">
+                    {formatCompensation(job.salary_min, job.salary_max, job.salary_currency) || (
+                      <span style={{ color: "var(--border)" }}>—</span>
+                    )}
                   </Td>
                   <Td className="text-xs" style={{ color: "var(--muted)" }}>
                     {inclusionReason(job.location, job.remote_type) || (

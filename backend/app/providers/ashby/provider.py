@@ -83,11 +83,12 @@ class AshbyProvider(JobProvider):
         if is_remote is True:
             remote_type = "remote"
         elif is_remote is False:
-            # Explicitly-not-remote — but let heuristic distinguish hybrid vs onsite.
             heuristic = detect_remote_type(location, description_html)
             remote_type = heuristic if heuristic in {"hybrid", "onsite"} else "onsite"
         else:
             remote_type = detect_remote_type(location, description_html)
+
+        salary_min, salary_max, salary_currency = _extract_salary(raw_job)
 
         return NormalizedJob(
             source_provider=self.name,
@@ -100,5 +101,36 @@ class AshbyProvider(JobProvider):
             remote_type=remote_type,
             employment_type=raw_job.get("employmentType"),
             department=clean_department(raw_job.get("department")),
+            salary_min=salary_min,
+            salary_max=salary_max,
+            salary_currency=salary_currency,
             posted_at=_parse_datetime(raw_job.get("publishedAt") or raw_job.get("updatedAt")),
         )
+
+
+def _extract_salary(raw_job: dict[str, Any]) -> tuple[float | None, float | None, str | None]:
+    """Pull Salary min/max/currency out of Ashby's compensation payload.
+
+    Only surfaces comp when the poster opted in (``shouldDisplayCompensationOnJobPostings``);
+    otherwise Ashby still returns the numbers but they're not meant to be shown publicly.
+    """
+    if not raw_job.get("shouldDisplayCompensationOnJobPostings"):
+        return None, None, None
+    comp = raw_job.get("compensation") or {}
+    for component in comp.get("summaryComponents") or []:
+        if component.get("compensationType") == "Salary":
+            return (
+                _to_float(component.get("minValue")),
+                _to_float(component.get("maxValue")),
+                component.get("currencyCode"),
+            )
+    return None, None, None
+
+
+def _to_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
