@@ -20,9 +20,20 @@ def test_ignores_path_after_board_token():
     assert detected.source_identifier == "acme"
 
 
-def test_returns_none_for_unsupported_host():
-    assert detect_source("https://jobs.lever.co/acme") is None
+def test_detects_ashby_board_url():
+    detected = detect_source("https://jobs.ashbyhq.com/linear")
+    assert detected is not None
+    assert detected.provider == "ashby"
+    assert detected.source_identifier == "linear"
+
+
+def test_detects_lever_board_url():
+    detected = detect_source("https://jobs.lever.co/palantir")
+    assert detected is not None
+    assert detected.provider == "lever"
+    assert detected.source_identifier == "palantir"
 
 
 def test_returns_none_for_non_ats_url():
     assert detect_source("https://acme.com/careers") is None
+    assert detect_source("https://jobs.workday.com/acme") is None

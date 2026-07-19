@@ -31,10 +31,13 @@ class Candidate:
 # Regexes for each provider's public URL shape.
 # Greenhouse:  boards.greenhouse.io/<token>
 # Ashby:       jobs.ashbyhq.com/<orgId>  or  api.ashbyhq.com/posting-api/job-board/<orgId>
+# Lever:       jobs.lever.co/<slug>       or  api.lever.co/v0/postings/<slug>
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("greenhouse", re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9\-_]+)")),
     ("ashby", re.compile(r"jobs\.ashbyhq\.com/([a-zA-Z0-9\-_]+)")),
     ("ashby", re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([a-zA-Z0-9\-_]+)")),
+    ("lever", re.compile(r"jobs\.lever\.co/([a-zA-Z0-9\-_]+)")),
+    ("lever", re.compile(r"api\.lever\.co/v0/postings/([a-zA-Z0-9\-_]+)")),
 ]
 
 # Tokens that would appear in extracted matches but aren't real orgIds. Anything the URL
@@ -43,6 +46,8 @@ _EXCLUDED_TOKENS = {
     "embed",  # boards.greenhouse.io/embed/job_board?for=...
     "posting-api",
     "job-board",
+    "v0",
+    "postings",
 }
 
 
@@ -89,6 +94,25 @@ def _validate_greenhouse(token: str) -> tuple[str, int] | None:
     return (name, len(jobs))
 
 
+def _validate_lever(token: str) -> tuple[str, int] | None:
+    try:
+        r = httpx.get(f"https://api.lever.co/v0/postings/{token}?mode=json", timeout=8.0)
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    jobs = data if isinstance(data, list) else []
+    if not jobs:
+        return None
+    # Lever doesn't return a company_name on each posting; derive from the slug.
+    name = token.replace("-", " ").replace("_", " ").title()
+    return (name, len(jobs))
+
+
 def _validate_ashby(token: str) -> tuple[str, int] | None:
     try:
         r = httpx.get(
@@ -112,7 +136,11 @@ def _validate_ashby(token: str) -> tuple[str, int] | None:
     return (name, len(jobs))
 
 
-_VALIDATORS = {"greenhouse": _validate_greenhouse, "ashby": _validate_ashby}
+_VALIDATORS = {
+    "greenhouse": _validate_greenhouse,
+    "ashby": _validate_ashby,
+    "lever": _validate_lever,
+}
 
 
 def _source_url(match: TokenMatch) -> str:
@@ -120,6 +148,8 @@ def _source_url(match: TokenMatch) -> str:
         return f"https://boards.greenhouse.io/{match.token}"
     if match.provider == "ashby":
         return f"https://jobs.ashbyhq.com/{match.token}"
+    if match.provider == "lever":
+        return f"https://jobs.lever.co/{match.token}"
     return ""
 
 
