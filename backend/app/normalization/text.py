@@ -92,6 +92,7 @@ NON_US_LOCATION_INDICATORS = (
     "turkey", "istanbul",
     "emea", "apac", "latam",
     "european union",
+    "europe", "european",  # catches "Remote (Europe-based candidates only)" and similar
 )
 
 

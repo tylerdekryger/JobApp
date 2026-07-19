@@ -13,14 +13,6 @@ interface Props {
   currentSort: SortKey;
 }
 
-function toSnippet(html: string, max = 220): string {
-  // Descriptions can arrive as HTML with double-encoded entities. Decode enough to make a
-  // readable one-line summary.
-  const once = html.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-  const stripped = once.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  return stripped.length > max ? stripped.slice(0, max).trimEnd() + "…" : stripped;
-}
-
 function relativeShort(iso: string | null): string {
   if (!iso) return "—";
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -68,14 +60,6 @@ const REMOTE_LABELS: Record<string, string> = {
   unknown: "Unknown",
 };
 
-function inclusionReason(location: string | null, remoteType: string | null): string {
-  const loc = (location ?? "").toLowerCase();
-  if (loc.includes("remote")) return "";
-  if (remoteType === "remote") return "Body confirms remote";
-  if (remoteType === "unknown" || remoteType === null) return "Remote status unclear — verify before applying";
-  return ""; // shouldn't happen given the remote filter, but stay silent if it does
-}
-
 type AnalysisState =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -107,6 +91,20 @@ export function JobTable({ jobs, currentSort }: Props) {
       }));
     }
   }
+
+  async function marketCheckAllVisible() {
+    for (const job of jobs) {
+      const alreadyDone = marketChecks[job.id]?.kind === "done" || (!!job.market_check_summary);
+      if (alreadyDone) continue;
+      // eslint-disable-next-line no-await-in-loop -- sequential to respect Tavily rate limits
+      await runMarketCheck(job.id);
+    }
+  }
+
+  const marketCheckedCount = jobs.filter((j) => {
+    const local = marketChecks[j.id];
+    return (local && local.kind === "done") || !!j.market_check_summary;
+  }).length;
 
   function sortLink(column: "added" | "posted"): { href: string; indicator: string; active: boolean } {
     const isActive = currentSort.startsWith(column);
@@ -161,23 +159,38 @@ export function JobTable({ jobs, currentSort }: Props) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm" style={{ color: "var(--muted)" }}>
-          {analyzedCount}/{jobs.length} rows analyzed
+          {analyzedCount}/{jobs.length} analyzed · {marketCheckedCount}/{jobs.length} market-checked
         </p>
-        <button
-          type="button"
-          onClick={analyzeAllVisible}
-          disabled={analyzedCount === jobs.length}
-          className="rounded-lg px-3 py-1.5 text-sm font-medium border transition-opacity"
-          style={{
-            borderColor: "var(--accent)",
-            color: "var(--accent)",
-            opacity: analyzedCount === jobs.length ? 0.4 : 1,
-          }}
-        >
-          Analyze all visible ({jobs.length - analyzedCount} left)
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={marketCheckAllVisible}
+            disabled={marketCheckedCount === jobs.length}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium border transition-opacity"
+            style={{
+              borderColor: "var(--accent)",
+              color: "var(--accent)",
+              opacity: marketCheckedCount === jobs.length ? 0.4 : 1,
+            }}
+          >
+            Market-check all visible ({jobs.length - marketCheckedCount} left)
+          </button>
+          <button
+            type="button"
+            onClick={analyzeAllVisible}
+            disabled={analyzedCount === jobs.length}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium border transition-opacity"
+            style={{
+              borderColor: "var(--accent)",
+              color: "var(--accent)",
+              opacity: analyzedCount === jobs.length ? 0.4 : 1,
+            }}
+          >
+            Analyze all visible ({jobs.length - analyzedCount} left)
+          </button>
+        </div>
       </div>
       <div className="card overflow-x-auto">
         <table className="w-full text-sm border-collapse">
@@ -199,9 +212,7 @@ export function JobTable({ jobs, currentSort }: Props) {
               <Th>Remote</Th>
               <Th>Comp</Th>
               <Th className="min-w-[220px]">Market check</Th>
-              <Th className="min-w-[160px]">Why kept</Th>
               <Th>Link</Th>
-              <Th className="min-w-[220px]">Overview</Th>
               <Th className="min-w-[220px]">Fit</Th>
               <Th className="min-w-[220px]">Gaps</Th>
             </tr>
@@ -272,11 +283,6 @@ export function JobTable({ jobs, currentSort }: Props) {
                       onCheck={() => runMarketCheck(job.id)}
                     />
                   </Td>
-                  <Td className="text-xs" style={{ color: "var(--muted)" }}>
-                    {inclusionReason(job.location, job.remote_type) || (
-                      <span style={{ color: "var(--border)" }}>—</span>
-                    )}
-                  </Td>
                   <Td>
                     <a
                       href={job.canonical_url}
@@ -287,11 +293,6 @@ export function JobTable({ jobs, currentSort }: Props) {
                     >
                       Apply ↗
                     </a>
-                  </Td>
-                  <Td>
-                    <p style={{ color: "var(--muted)" }} className="leading-snug">
-                      {toSnippet(job.description_clean || job.description)}
-                    </p>
                   </Td>
                   <Td>
                     <AnalysisCell

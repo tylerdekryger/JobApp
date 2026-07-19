@@ -29,14 +29,29 @@ from app.normalization.text import (
 
 def _us_eligibility_condition() -> ColumnElement[bool]:
     """WHERE clause equivalent of ``is_us_eligible``: include null/empty, US indicators, or
-    ambiguous strings; exclude only when the location has ONLY non-US indicators."""
-    us_match = or_(*[Job.location.ilike(f"%{ind}%") for ind in US_LOCATION_INDICATORS])
-    non_us_match = or_(*[Job.location.ilike(f"%{ind}%") for ind in NON_US_LOCATION_INDICATORS])
-    return or_(
-        Job.location.is_(None),
-        Job.location == "",
-        us_match,
-        and_(not_(non_us_match), not_(us_match)),  # no signal either way — keep permissively
+    ambiguous strings; exclude only when EITHER the location OR the title has ONLY non-US
+    indicators. Title matters because some sources bury the country in the role name
+    (e.g. Storyblok's "Senior CSM - Germany, Austria or UK" with location just "Remote")."""
+    loc_us = or_(*[Job.location.ilike(f"%{ind}%") for ind in US_LOCATION_INDICATORS])
+    loc_non_us = or_(*[Job.location.ilike(f"%{ind}%") for ind in NON_US_LOCATION_INDICATORS])
+    title_us = or_(*[Job.title.ilike(f"%{ind}%") for ind in US_LOCATION_INDICATORS])
+    title_non_us = or_(*[Job.title.ilike(f"%{ind}%") for ind in NON_US_LOCATION_INDICATORS])
+
+    # Reject if EITHER field signals non-US-only.
+    location_bad = and_(loc_non_us, not_(loc_us))
+    title_bad = and_(title_non_us, not_(title_us))
+
+    return and_(
+        # Keep null/empty location or one with a US or ambiguous signal.
+        or_(
+            Job.location.is_(None),
+            Job.location == "",
+            loc_us,
+            and_(not_(loc_non_us), not_(loc_us)),
+        ),
+        # And the title likewise mustn't scream non-US.
+        not_(title_bad),
+        not_(location_bad),  # redundant with above but keeps intent explicit
     )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
