@@ -2,13 +2,19 @@
 
 Ashby (and Greenhouse to a lesser extent) let posters bump ``publishedAt`` at will —
 so a job showing "posted 1 day ago" in our table may in fact have been circulating
-for months elsewhere. We can't fix that at the source, but we CAN cross-check LinkedIn
-via Tavily: their snippets often carry age hints ("3 months ago", "4,000+ applicants",
-"No longer accepting applications"), which is exactly the market context users need.
+for months elsewhere. We cross-check LinkedIn via Tavily and extract two facts:
+when the role was posted (with a repost flag if visible) and how many applicants it
+has attracted. Everything else is noise for this UI.
+
+Output is stored as a compact multi-line string that renders as bullets in the UI:
+
+    Posted: 3 months ago (reposted)
+    Applicants: 200+
 """
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import httpx
@@ -22,6 +28,43 @@ class MarketCheckError(RuntimeError):
 class MarketCheckResult:
     summary: str
     linkedin_url: str | None
+
+
+# Age like "3 months ago", "1 week ago", "24 hours ago".
+_AGE_RE = re.compile(
+    r"(\d+\+?\s*(?:hour|day|week|month|year)s?\s+ago)",
+    re.IGNORECASE,
+)
+_REPOSTED_RE = re.compile(r"\breposted\b", re.IGNORECASE)
+_CLOSED_RE = re.compile(r"no longer accepting applications", re.IGNORECASE)
+
+# Applicant patterns, most specific first.
+_APPLICANT_PATTERNS = [
+    re.compile(r"over\s+(\d[\d,]*)\s+(?:people\s+)?applicants?", re.IGNORECASE),
+    re.compile(r"(\d[\d,]*)\+\s+applicants?", re.IGNORECASE),
+    re.compile(r"be\s+among\s+the\s+first\s+(\d+)\s+applicants?", re.IGNORECASE),
+    re.compile(r"(\d[\d,]*)\s+applicants?", re.IGNORECASE),
+    re.compile(r"(\d[\d,]*)\s+people\s+clicked\s+apply", re.IGNORECASE),
+]
+
+
+def _extract_age(text: str) -> str | None:
+    m = _AGE_RE.search(text)
+    if not m:
+        return None
+    return re.sub(r"\s+", " ", m.group(1)).strip().lower()
+
+
+def _extract_applicants(text: str) -> str | None:
+    for pat in _APPLICANT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            n = m.group(1)
+            # Distinguish "be among the first N" — it means fewer than N have applied.
+            if pat.pattern.startswith(r"be\s+among"):
+                return f"first {n}"
+            return f"{n}+"
+    return None
 
 
 def market_check(*, title: str, company: str) -> MarketCheckResult:
@@ -40,7 +83,7 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
                 "query": query,
                 "search_depth": "advanced",
                 "max_results": 5,
-                "include_answer": True,
+                "include_answer": False,
                 "include_domains": ["linkedin.com"],
             },
             timeout=30,
@@ -56,51 +99,36 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
         raise MarketCheckError(f"Tavily error {r.status_code}: {str(msg)[:200]}")
 
     data = r.json()
-    answer = (data.get("answer") or "").strip()
     results = data.get("results") or []
 
-    # Find the most likely LinkedIn job posting URL.
-    linkedin_url: str | None = None
-    for res in results:
-        url = res.get("url") or ""
-        if "/jobs/view/" in url:
-            linkedin_url = url
-            break
-    if linkedin_url is None and results:
-        # Fall back to the top result even if it's a person/profile — user can judge.
-        linkedin_url = results[0].get("url")
+    # Extract ONLY from the exact-match /jobs/view/ snippet. Other Tavily results are usually
+    # different Ashby/Greenhouse roles, and their "4 days ago" / "200+ applicants" hints do
+    # NOT belong to this job — mixing them in produces confidently-wrong attribution.
+    job_view = next((r for r in results if "/jobs/view/" in (r.get("url") or "")), None)
+    fallback = results[0] if results else None
+    top = job_view or fallback
 
-    # Build a compact summary. Prefer Tavily's answer; append age/applicant hints from the
-    # top snippets when we can spot them.
-    snippets = "\n".join((r.get("content") or "")[:200] for r in results[:3])
-    hints: list[str] = []
-    lower = snippets.lower()
-    for phrase in (
-        "no longer accepting applications",
-        "applicants",
-        "months ago",
-        "weeks ago",
-        "days ago",
-        "1 month ago",
-    ):
-        # Grab the surrounding ~40 chars so the hint has context.
-        idx = lower.find(phrase)
-        if idx == -1:
-            continue
-        left = max(0, idx - 20)
-        right = min(len(snippets), idx + len(phrase) + 40)
-        hints.append(snippets[left:right].strip())
+    linkedin_url = (top or {}).get("url")
+    scoped = (job_view or {}).get("content", "") or ""
 
-    hint_text = " · ".join(dict.fromkeys(hints))  # de-dup while preserving order
-    summary_parts = []
-    if answer:
-        summary_parts.append(answer)
-    if hint_text:
-        summary_parts.append(f"Signals: {hint_text}")
-    if not summary_parts:
-        summary_parts.append("No LinkedIn presence found for this exact title + company.")
+    age = _extract_age(scoped)
+    applicants = _extract_applicants(scoped)
+    reposted = bool(_REPOSTED_RE.search(scoped))
+    closed = bool(_CLOSED_RE.search(scoped))
 
-    return MarketCheckResult(
-        summary=" — ".join(summary_parts),
-        linkedin_url=linkedin_url,
-    )
+    if not results:
+        summary = "Posted: not found on LinkedIn\nApplicants: —"
+    elif job_view is None:
+        # Have some LinkedIn presence but no canonical job posting — usually a personal
+        # post or company page. Report honestly rather than guessing.
+        summary = "Posted: no LinkedIn job posting found\nApplicants: —"
+    else:
+        posted_line = f"Posted: {age or 'unknown'}"
+        if reposted:
+            posted_line += " (reposted)"
+        if closed:
+            posted_line += " · no longer accepting"
+        applicants_line = f"Applicants: {applicants or 'unknown'}"
+        summary = f"{posted_line}\n{applicants_line}"
+
+    return MarketCheckResult(summary=summary, linkedin_url=linkedin_url)

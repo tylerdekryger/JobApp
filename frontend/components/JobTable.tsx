@@ -387,9 +387,14 @@ function MarketCell({
       </button>
     );
   }
+  const bullets = summary.split("\n").filter((s) => s.trim());
   return (
     <div className="space-y-1">
-      <p className="leading-snug">{summary}</p>
+      <ul className="list-disc pl-4 space-y-0.5 leading-snug">
+        {bullets.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
       {url && (
         <a
           href={url}
