@@ -70,13 +70,16 @@ export function SearchControls({}: Props) {
       </div>
       <label className="flex flex-col text-sm">
         <span className="mb-1 font-medium" style={{ color: "var(--muted)" }}>
-          Role keywords <span className="font-normal">(comma-separated — title matches ANY)</span>
+          Role keywords{" "}
+          <span className="font-normal">
+            (UPPERCASE AND/OR — AND binds tighter; commas = OR)
+          </span>
         </span>
         <input
           type="text"
           value={titleContains}
           onChange={(e) => setTitleContains(e.target.value)}
-          placeholder="e.g. Manager, Customer Success, Solutions"
+          placeholder="e.g. Customer Success AND Operation OR Analyst OR GTM"
           className="rounded-lg border px-3 py-2 bg-transparent"
           style={{ borderColor: "var(--border)" }}
         />

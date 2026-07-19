@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -74,10 +75,33 @@ class JobFilters:
             return []
         return [v.strip() for v in self.remote_type.split(",") if v.strip()]
 
-    def _title_terms(self) -> list[str]:
-        if not self.title_contains:
+    def _title_or_groups(self) -> list[list[str]]:
+        """Parse a boolean title query into groups of AND-terms joined by OR.
+
+        Syntax:
+            - UPPERCASE ``AND`` and ``OR`` are operators; AND binds tighter than OR.
+            - Commas are OR shorthand (backward compat with earlier comma-only syntax).
+            - Anything else (including lowercase ``and``/``or``) is part of a term.
+
+        Examples::
+
+            "Customer Success AND Operation OR Analyst OR GTM"
+              → [["Customer Success", "Operation"], ["Analyst"], ["GTM"]]
+            "Manager, Customer Success"
+              → [["Manager"], ["Customer Success"]]
+        """
+        raw = (self.title_contains or "").strip()
+        if not raw:
             return []
-        return [t.strip() for t in self.title_contains.split(",") if t.strip()]
+        # Comma → OR (preserves backward-compat behavior).
+        normalized = re.sub(r"\s*,\s*", " OR ", raw)
+        # Split on OR first (looser binding), then on AND within each group.
+        groups: list[list[str]] = []
+        for or_chunk in re.split(r"\s+OR\s+", normalized):
+            terms = [t.strip() for t in re.split(r"\s+AND\s+", or_chunk) if t.strip()]
+            if terms:
+                groups.append(terms)
+        return groups
 
     def build_conditions(self) -> list[ColumnElement[bool]]:
         conditions: list[ColumnElement[bool]] = []
@@ -102,11 +126,15 @@ class JobFilters:
         if self.posted_since_days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=self.posted_since_days)
             conditions.append(Job.first_seen_at >= cutoff)
-        title_terms = self._title_terms()
-        if title_terms:
-            # ANY of the terms may appear in the title (OR). Comma-separated input like
-            # "Manager, Customer Success" matches titles containing either phrase.
-            conditions.append(or_(*[Job.title.ilike(f"%{term}%") for term in title_terms]))
+        title_groups = self._title_or_groups()
+        if title_groups:
+            # Each inner group's terms are AND-ed (all must appear in the title);
+            # the outer list is OR-ed across groups.
+            per_group = [
+                and_(*[Job.title.ilike(f"%{term}%") for term in group])
+                for group in title_groups
+            ]
+            conditions.append(or_(*per_group))
         if self.q:
             # Match against title only. Previously also matched description + company name,
             # which produced rows whose Role column didn't obviously contain the search term.
@@ -164,7 +192,11 @@ def list_jobs(
     remote_type: str | None = Query(default=None, description="Filter by remote/hybrid/onsite/unknown"),
     title_contains: str | None = Query(
         default=None,
-        description="Comma-separated terms; ANY may appear in the title (case-insensitive).",
+        description=(
+            "Boolean title query. Use UPPERCASE AND/OR (AND binds tighter than OR); "
+            "commas are treated as OR shorthand. Example: "
+            "'Customer Success AND Operation OR Analyst OR GTM'."
+        ),
     ),
     company_id: int | None = None,
     source_id: int | None = None,
