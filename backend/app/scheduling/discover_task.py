@@ -82,6 +82,9 @@ SEARCH_INCLUDE_DOMAINS = [
     "jobs.lever.co",
     "jobs.smartrecruiters.com",
     "breezy.hr",
+    "apply.workable.com",
+    "bamboohr.com",
+    "myworkdayjobs.com",
 ]
 
 
@@ -122,10 +125,10 @@ def _search_via_gemini(query: str) -> tuple[str, str | None]:
     key = os.environ["GEMINI_API_KEY"]
     prompt = (
         f"Find at least 15 unique career-board URLs for {query}. Return URLs only, one per "
-        "line, matching any of: `boards.greenhouse.io/<token>` (Greenhouse), "
-        "`jobs.ashbyhq.com/<orgId>` (Ashby), `jobs.lever.co/<slug>` (Lever), "
-        "`jobs.smartrecruiters.com/<companyId>` (SmartRecruiters), or "
-        "`<company>.breezy.hr` (BreezyHR). Prefer smaller/less-known companies."
+        "line, matching any of: `boards.greenhouse.io/<token>`, `jobs.ashbyhq.com/<orgId>`, "
+        "`jobs.lever.co/<slug>`, `jobs.smartrecruiters.com/<companyId>`, "
+        "`<company>.breezy.hr`, `apply.workable.com/<token>`, `<company>.bamboohr.com`, "
+        "or `<tenant>.<wdN>.myworkdayjobs.com/<site>`. Prefer smaller/less-known companies."
     )
     r = httpx.post(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
@@ -159,9 +162,10 @@ def _search_via_anthropic(query: str) -> tuple[str, str | None]:
     prompt = (
         f"Search the web for career-board URLs matching `{query}`. Return every unique URL "
         "you find matching `boards.greenhouse.io/<token>`, `jobs.ashbyhq.com/<orgId>`, "
-        "`jobs.lever.co/<slug>`, `jobs.smartrecruiters.com/<companyId>`, or "
-        "`<company>.breezy.hr`. One per line, nothing else. Prefer smaller/less-known "
-        "companies. Return at least 15 URLs if possible."
+        "`jobs.lever.co/<slug>`, `jobs.smartrecruiters.com/<companyId>`, `<company>.breezy.hr`, "
+        "`apply.workable.com/<token>`, `<company>.bamboohr.com`, or "
+        "`<tenant>.<wdN>.myworkdayjobs.com/<site>`. One per line, nothing else. Prefer "
+        "smaller/less-known companies. Return at least 15 URLs if possible."
     )
     try:
         msg = client.messages.create(

@@ -43,6 +43,10 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("smartrecruiters", re.compile(r"jobs\.smartrecruiters\.com/([a-zA-Z0-9\-_]+)")),
     ("smartrecruiters", re.compile(r"api\.smartrecruiters\.com/v1/companies/([a-zA-Z0-9\-_]+)")),
     ("breezyhr", re.compile(r"https?://([a-zA-Z0-9\-_]+)\.breezy\.hr")),
+    ("workable", re.compile(r"apply\.workable\.com/([a-zA-Z0-9\-_]+)")),
+    ("bamboohr", re.compile(r"https?://([a-zA-Z0-9\-_]+)\.bamboohr\.com")),
+    # Workday: encoded (host, tenant, site) triple. Matches the FULL URL — we don't extract
+    # a token here because the identifier is composite. See _extract_workday_ids below.
 ]
 
 # Tokens that would appear in extracted matches but aren't real orgIds. Anything the URL
@@ -61,6 +65,36 @@ _EXCLUDED_TOKENS = {
 }
 
 
+_WORKDAY_URL_RE = re.compile(
+    r"https?://([a-z0-9\-]+)\.([a-z0-9]+\.myworkdayjobs\.com)/(?:[a-z]{2}(?:-[A-Z]{2})?/)?([a-zA-Z0-9\-_]+)",
+    re.IGNORECASE,
+)
+
+
+def _extract_workday(text: str) -> set[TokenMatch]:
+    """Workday's identifier is a (tenant, host, site) triple encoded as tenant||host||site."""
+    from app.providers.workday.client import WorkdayClient
+
+    out: set[TokenMatch] = set()
+    seen: set[str] = set()
+    for m in _WORKDAY_URL_RE.finditer(text or ""):
+        tenant = m.group(1).lower()
+        # Full host is <tenant>.<wdN>.myworkdayjobs.com
+        host = f"{tenant}.{m.group(2).lower()}"
+        site = m.group(3)
+        if site in _EXCLUDED_TOKENS:
+            continue
+        # Route segments that aren't real site names.
+        if site.lower() in {"job", "jobs", "wday", "cxs"}:
+            continue
+        ident = WorkdayClient.encode_identifier(host, tenant, site)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.add(TokenMatch(provider="workday", token=ident))
+    return out
+
+
 def extract_tokens(text: str) -> set[TokenMatch]:
     """Return all unique (provider, token) pairs found in ``text``."""
     out: set[TokenMatch] = set()
@@ -69,13 +103,15 @@ def extract_tokens(text: str) -> set[TokenMatch]:
             token = m.strip()
             if not token or token in _EXCLUDED_TOKENS:
                 continue
-            # Ashby job IDs are UUIDs — they follow the org in the URL but shouldn't be
-            # captured as separate orgs. The regex here captures the FIRST segment after
-            # the host, which is already the orgId; UUIDs will just fail validation later
-            # if they slip through, but this guard avoids the wasted API call.
+            # Ashby / Workable job IDs are UUIDs or shortcodes; skip those.
             if provider == "ashby" and _looks_like_uuid(token):
                 continue
+            # Workable single-job URLs: apply.workable.com/j/<shortcode> — token would be "j".
+            if provider == "workable" and token in {"j"}:
+                continue
             out.add(TokenMatch(provider=provider, token=token))
+    # Workday's identifier is composite, extracted separately.
+    out |= _extract_workday(text)
     return out
 
 
@@ -121,6 +157,82 @@ def _validate_lever(token: str) -> tuple[str, int] | None:
     # Lever doesn't return a company_name on each posting; derive from the slug.
     name = token.replace("-", " ").replace("_", " ").title()
     return (name, len(jobs))
+
+
+def _validate_workable(token: str) -> tuple[str, int] | None:
+    try:
+        r = httpx.get(
+            f"https://apply.workable.com/api/v1/widget/accounts/{token}",
+            timeout=8.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    jobs = data.get("jobs", []) if isinstance(data, dict) else []
+    if not jobs:
+        return None
+    name = data.get("name") or token.replace("-", " ").replace("_", " ").title()
+    return (name, len(jobs))
+
+
+def _validate_bamboohr(token: str) -> tuple[str, int] | None:
+    try:
+        r = httpx.get(
+            f"https://{token}.bamboohr.com/careers/list",
+            headers={"User-Agent": "job-intel/0.1", "Accept": "application/json"},
+            timeout=8.0,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    jobs = data.get("result", [])
+    if not jobs:
+        return None
+    name = token.replace("-", " ").replace("_", " ").title()
+    return (name, len(jobs))
+
+
+def _validate_workday(token: str) -> tuple[str, int] | None:
+    try:
+        from app.providers.workday.client import WorkdayClient
+
+        tenant, host, site = WorkdayClient.decode_identifier(token)
+    except ValueError:
+        return None
+    url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+    try:
+        r = httpx.post(
+            url,
+            json={"limit": 1, "offset": 0, "searchText": "", "appliedFacets": {}},
+            headers={"User-Agent": "job-intel/0.1", "Accept": "application/json"},
+            timeout=12.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    total = int(data.get("total") or 0)
+    if total == 0:
+        return None
+    name = tenant.replace("-", " ").replace("_", " ").title()
+    return (name, total)
 
 
 def _validate_smartrecruiters(token: str) -> tuple[str, int] | None:
@@ -197,6 +309,9 @@ _VALIDATORS = {
     "lever": _validate_lever,
     "smartrecruiters": _validate_smartrecruiters,
     "breezyhr": _validate_breezyhr,
+    "workable": _validate_workable,
+    "bamboohr": _validate_bamboohr,
+    "workday": _validate_workday,
 }
 
 
@@ -211,6 +326,17 @@ def _source_url(match: TokenMatch) -> str:
         return f"https://jobs.smartrecruiters.com/{match.token}"
     if match.provider == "breezyhr":
         return f"https://{match.token}.breezy.hr"
+    if match.provider == "workable":
+        return f"https://apply.workable.com/{match.token}"
+    if match.provider == "bamboohr":
+        return f"https://{match.token}.bamboohr.com"
+    if match.provider == "workday":
+        try:
+            from app.providers.workday.client import WorkdayClient
+            _, host, site = WorkdayClient.decode_identifier(match.token)
+            return f"https://{host}/{site}"
+        except ValueError:
+            return ""
     return ""
 
 
