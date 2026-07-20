@@ -104,11 +104,11 @@ class WorkdayProvider(JobProvider):
         title = raw_job.get("title") or ""
         location = raw_job.get("locationsText") or None
         external_path = raw_job.get("externalPath") or ""
-        # Reconstruct a public URL. externalPath starts with /job/... — we need to prepend
-        # the tenant host + site. The sync service sets JobSource.source_url so callers can
-        # rebuild — but at normalize time we don't have that context; keep it best-effort.
-        bullet = (raw_job.get("bulletFields") or [None])[0]
-        job_id = str(bullet) if bullet else external_path.rsplit("/", 1)[-1]
+        # externalPath is guaranteed unique per posting per tenant; use it as source_job_id.
+        # We previously used bulletFields[0], but that array contains different content per
+        # tenant — sometimes the actual job req ID, sometimes a country name — which caused
+        # unique-constraint collisions.
+        job_id = external_path or raw_job.get("id") or ""
 
         # Workday doesn't expose a remote flag; look at the human-readable text only.
         remote_type = detect_remote_type(location, "")

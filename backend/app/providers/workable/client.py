@@ -42,7 +42,21 @@ class WorkableClient:
 
     def list_jobs(self, token: str) -> list[dict[str, Any]]:
         data = self._get(f"/{token}")
-        return data.get("jobs", []) if isinstance(data, dict) else []
+        raw_jobs = data.get("jobs", []) if isinstance(data, dict) else []
+        # Workable emits one row per (posting, location) pair — same shortcode repeated
+        # N times when a role is listed in multiple cities. Collapse to unique shortcodes,
+        # joining their location fields into the first-seen row.
+        by_code: dict[str, dict[str, Any]] = {}
+        for j in raw_jobs:
+            code = j.get("shortcode") or j.get("code")
+            if not code:
+                continue
+            if code not in by_code:
+                by_code[code] = dict(j)
+                by_code[code]["locations"] = list(j.get("locations") or [])
+            else:
+                by_code[code]["locations"].extend(j.get("locations") or [])
+        return list(by_code.values())
 
     def get_meta(self, token: str) -> dict[str, Any]:
         """Return the top-level account info ({name, description, jobs})."""
