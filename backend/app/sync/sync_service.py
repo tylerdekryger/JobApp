@@ -52,16 +52,13 @@ def sync_source(session: Session, source_id: int) -> SyncResult:
 
     for raw_job in raw_jobs:
         normalized = provider.normalize(raw_job, source.company.name)
-        # Workday returns externalPath as a bare relative path ("/job/..."); rebuild the
-        # full URL using the source's saved host. Doing it here (post-normalize) keeps
-        # the provider signature clean.
+        # Workday returns externalPath as a bare relative path ("/job/..."), but the
+        # browser-accessible URL requires the site name too: <host>/<site>/job/...
+        # The saved source_url already has that shape, so just prepend it.
         if source.provider == "workday" and normalized.canonical_url.startswith("/"):
-            source_url = (source.source_url or "").rstrip("/")
-            # source_url looks like "https://<host>/<site>"; extract the host and prepend.
-            from urllib.parse import urlparse
-            parsed = urlparse(source_url)
-            if parsed.scheme and parsed.hostname:
-                normalized.canonical_url = f"{parsed.scheme}://{parsed.hostname}{normalized.canonical_url}"
+            base = (source.source_url or "").rstrip("/")
+            if base:
+                normalized.canonical_url = f"{base}{normalized.canonical_url}"
         # Skip jobs the source itself reports as older than MAX_JOB_AGE. Jobs whose posted_at
         # can't be parsed are kept — better to include-with-unknown-date than drop silently.
         if normalized.posted_at is not None and normalized.posted_at < age_cutoff:
