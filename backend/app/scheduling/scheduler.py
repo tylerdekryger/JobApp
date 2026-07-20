@@ -26,6 +26,22 @@ from app.domain.models import JobSource
 from app.scheduling.discover_task import run_auto_discover
 from app.sync.sync_service import sync_source
 
+# The digest send is a light wrapper so the scheduler doesn't blow up when SMTP isn't
+# configured — it should just log and skip.
+def _run_digest_safe() -> None:
+    try:
+        from app.digest.service import DigestError, send_daily_digest
+        try:
+            result = send_daily_digest()
+            logger.info(
+                "daily-digest job ran presets=%d matches=%d skipped=%s",
+                result.presets_run, result.total_matches, result.skipped,
+            )
+        except DigestError as exc:
+            logger.warning("daily-digest skipped: %s", exc)
+    except Exception:  # noqa: BLE001 — never let the scheduler die on this
+        logger.exception("daily-digest crashed unexpectedly")
+
 logger = logging.getLogger(__name__)
 
 _scheduler: BackgroundScheduler | None = None
@@ -103,9 +119,27 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
+
+    # Daily email digest — Mon–Fri at the configured hour (default 8am ET).
+    digest_hour = _int_env("DIGEST_HOUR_ET", 8)
+    digest_trigger = CronTrigger(
+        day_of_week="mon-fri",
+        hour=digest_hour,
+        minute=0,
+        timezone="America/New_York",
+    )
+    _scheduler.add_job(
+        _run_digest_safe,
+        digest_trigger,
+        id="daily_digest",
+        max_instances=1,
+        coalesce=True,
+    )
+
     logger.info(
-        "scheduler started — auto-sync every %d min; auto-discover Mon-Fri 08:00-18:00 ET / 2h",
-        sync_minutes,
+        "scheduler started — auto-sync every %d min; auto-discover Mon-Fri 08:00-18:00 ET / 2h; "
+        "daily-digest Mon-Fri %02d:00 ET",
+        sync_minutes, digest_hour,
     )
     _scheduler.start()
 

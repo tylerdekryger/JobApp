@@ -105,3 +105,24 @@ class UserProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class DigestPreset(Base):
+    """A saved boolean title query the user wants sent as a daily email digest.
+
+    Each preset becomes one section of the daily email. Only jobs first seen (or
+    reopened) in the last 24 hours that match the preset's title_contains query
+    are included — so the email stays about *new* matches, not the whole result set.
+    """
+
+    __tablename__ = "digest_presets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    title_contains: Mapped[str] = mapped_column(Text)  # boolean title query (AND/OR/parens)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

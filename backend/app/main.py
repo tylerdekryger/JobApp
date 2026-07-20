@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import companies, discover, jobs, profile, sources
+from app.api.routes import companies, digests, discover, jobs, profile, sources
 from app.logging import configure_logging
 from app.scheduling.scheduler import start_scheduler, stop_scheduler
 
@@ -42,6 +42,7 @@ app.include_router(jobs.router)
 app.include_router(companies.router)
 app.include_router(profile.router)
 app.include_router(discover.router)
+app.include_router(digests.router)
 
 
 @app.get("/health")

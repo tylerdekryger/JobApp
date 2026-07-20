@@ -147,3 +147,34 @@ class MarketCheckResponse(BaseModel):
     summary: str
     linkedin_url: str | None
     checked_at: datetime
+
+
+class DigestPresetCreate(BaseModel):
+    name: str
+    title_contains: str
+    is_active: bool = True
+
+
+class DigestPresetUpdate(BaseModel):
+    name: str | None = None
+    title_contains: str | None = None
+    is_active: bool | None = None
+
+
+class DigestPresetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    title_contains: str
+    is_active: bool
+    last_sent_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DigestSendResponse(BaseModel):
+    presets_run: int
+    total_matches: int
+    to: str
+    subject: str
+    skipped: str | None = None

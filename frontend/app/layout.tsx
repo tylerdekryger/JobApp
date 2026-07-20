@@ -26,6 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/profile" className="hover:underline">
                 Profile
               </Link>
+              <Link href="/digest" className="hover:underline">
+                Digest
+              </Link>
             </nav>
           </div>
         </header>

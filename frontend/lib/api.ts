@@ -223,6 +223,70 @@ export async function marketCheckJob(jobId: number): Promise<MarketCheckResponse
   return res.json();
 }
 
+export interface DigestPreset {
+  id: number;
+  name: string;
+  title_contains: string;
+  is_active: boolean;
+  last_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DigestSendResult {
+  presets_run: number;
+  total_matches: number;
+  to: string;
+  subject: string;
+  skipped: string | null;
+}
+
+async function unwrap<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `${res.status}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+export async function listDigestPresets(): Promise<DigestPreset[]> {
+  return unwrap(await fetch(`${API_URL}/digests`, { cache: "no-store" }));
+}
+
+export async function createDigestPreset(
+  input: { name: string; title_contains: string; is_active?: boolean },
+): Promise<DigestPreset> {
+  return unwrap(
+    await fetch(`${API_URL}/digests`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateDigestPreset(
+  id: number,
+  patch: Partial<{ name: string; title_contains: string; is_active: boolean }>,
+): Promise<DigestPreset> {
+  return unwrap(
+    await fetch(`${API_URL}/digests/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function deleteDigestPreset(id: number): Promise<void> {
+  await unwrap<void>(await fetch(`${API_URL}/digests/${id}`, { method: "DELETE" }));
+}
+
+export async function sendDigestNow(): Promise<DigestSendResult> {
+  return unwrap(await fetch(`${API_URL}/digests/run-now`, { method: "POST" }));
+}
+
 export interface DiscoverCandidate {
   token: string;
   company_name: string;
