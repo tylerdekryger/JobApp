@@ -29,15 +29,20 @@ class Candidate:
 
 
 # Regexes for each provider's public URL shape.
-# Greenhouse:  boards.greenhouse.io/<token>
-# Ashby:       jobs.ashbyhq.com/<orgId>  or  api.ashbyhq.com/posting-api/job-board/<orgId>
-# Lever:       jobs.lever.co/<slug>       or  api.lever.co/v0/postings/<slug>
+# Greenhouse:      boards.greenhouse.io/<token>
+# Ashby:           jobs.ashbyhq.com/<orgId>  or  api.ashbyhq.com/posting-api/job-board/<orgId>
+# Lever:           jobs.lever.co/<slug>       or  api.lever.co/v0/postings/<slug>
+# SmartRecruiters: jobs.smartrecruiters.com/<companyId>   or  api.smartrecruiters.com/v1/companies/<id>
+# BreezyHR:        <companyId>.breezy.hr    (subdomain-based — first label)
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("greenhouse", re.compile(r"boards\.greenhouse\.io/([a-zA-Z0-9\-_]+)")),
     ("ashby", re.compile(r"jobs\.ashbyhq\.com/([a-zA-Z0-9\-_]+)")),
     ("ashby", re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([a-zA-Z0-9\-_]+)")),
     ("lever", re.compile(r"jobs\.lever\.co/([a-zA-Z0-9\-_]+)")),
     ("lever", re.compile(r"api\.lever\.co/v0/postings/([a-zA-Z0-9\-_]+)")),
+    ("smartrecruiters", re.compile(r"jobs\.smartrecruiters\.com/([a-zA-Z0-9\-_]+)")),
+    ("smartrecruiters", re.compile(r"api\.smartrecruiters\.com/v1/companies/([a-zA-Z0-9\-_]+)")),
+    ("breezyhr", re.compile(r"https?://([a-zA-Z0-9\-_]+)\.breezy\.hr")),
 ]
 
 # Tokens that would appear in extracted matches but aren't real orgIds. Anything the URL
@@ -48,6 +53,11 @@ _EXCLUDED_TOKENS = {
     "job-board",
     "v0",
     "postings",
+    "v1",
+    "companies",
+    "www",
+    "api",
+    "app",
 }
 
 
@@ -113,6 +123,51 @@ def _validate_lever(token: str) -> tuple[str, int] | None:
     return (name, len(jobs))
 
 
+def _validate_smartrecruiters(token: str) -> tuple[str, int] | None:
+    try:
+        r = httpx.get(
+            f"https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=1",
+            timeout=8.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        return None
+    total = int(data.get("totalFound") or 0)
+    if total == 0:
+        return None
+    # Prefer the display name from the first posting when available.
+    content = data.get("content") or []
+    if content:
+        name = (content[0].get("company") or {}).get("name") or token
+    else:
+        name = token
+    return (name, total)
+
+
+def _validate_breezyhr(token: str) -> tuple[str, int] | None:
+    try:
+        r = httpx.get(f"https://{token}.breezy.hr/json", timeout=8.0)
+    except httpx.HTTPError:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        jobs = r.json()
+    except ValueError:
+        return None
+    if not isinstance(jobs, list) or not jobs:
+        return None
+    # BreezyHR jobs carry a company object with a name field; fall back to a slug-derived name.
+    company_name = (jobs[0].get("company") or {}).get("name") if isinstance(jobs[0], dict) else None
+    name = company_name or token.replace("-", " ").replace("_", " ").title()
+    return (name, len(jobs))
+
+
 def _validate_ashby(token: str) -> tuple[str, int] | None:
     try:
         r = httpx.get(
@@ -140,6 +195,8 @@ _VALIDATORS = {
     "greenhouse": _validate_greenhouse,
     "ashby": _validate_ashby,
     "lever": _validate_lever,
+    "smartrecruiters": _validate_smartrecruiters,
+    "breezyhr": _validate_breezyhr,
 }
 
 
@@ -150,6 +207,10 @@ def _source_url(match: TokenMatch) -> str:
         return f"https://jobs.ashbyhq.com/{match.token}"
     if match.provider == "lever":
         return f"https://jobs.lever.co/{match.token}"
+    if match.provider == "smartrecruiters":
+        return f"https://jobs.smartrecruiters.com/{match.token}"
+    if match.provider == "breezyhr":
+        return f"https://{match.token}.breezy.hr"
     return ""
 
 

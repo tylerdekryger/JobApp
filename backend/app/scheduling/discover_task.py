@@ -80,6 +80,8 @@ SEARCH_INCLUDE_DOMAINS = [
     "boards.greenhouse.io",
     "jobs.ashbyhq.com",
     "jobs.lever.co",
+    "jobs.smartrecruiters.com",
+    "breezy.hr",
 ]
 
 
@@ -121,8 +123,9 @@ def _search_via_gemini(query: str) -> tuple[str, str | None]:
     prompt = (
         f"Find at least 15 unique career-board URLs for {query}. Return URLs only, one per "
         "line, matching any of: `boards.greenhouse.io/<token>` (Greenhouse), "
-        "`jobs.ashbyhq.com/<orgId>` (Ashby), or `jobs.lever.co/<slug>` (Lever). "
-        "Prefer smaller/less-known companies."
+        "`jobs.ashbyhq.com/<orgId>` (Ashby), `jobs.lever.co/<slug>` (Lever), "
+        "`jobs.smartrecruiters.com/<companyId>` (SmartRecruiters), or "
+        "`<company>.breezy.hr` (BreezyHR). Prefer smaller/less-known companies."
     )
     r = httpx.post(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
@@ -154,10 +157,11 @@ def _search_via_anthropic(query: str) -> tuple[str, str | None]:
 
     client = Anthropic()
     prompt = (
-        f"Search the web for career-board URLs matching `{query}`. Return every unique "
-        "`boards.greenhouse.io/<token>` (Greenhouse), `jobs.ashbyhq.com/<orgId>` (Ashby), "
-        "or `jobs.lever.co/<slug>` (Lever) URL you find, one per line, nothing else. "
-        "Prefer smaller/less-known companies. Return at least 15 URLs if possible."
+        f"Search the web for career-board URLs matching `{query}`. Return every unique URL "
+        "you find matching `boards.greenhouse.io/<token>`, `jobs.ashbyhq.com/<orgId>`, "
+        "`jobs.lever.co/<slug>`, `jobs.smartrecruiters.com/<companyId>`, or "
+        "`<company>.breezy.hr`. One per line, nothing else. Prefer smaller/less-known "
+        "companies. Return at least 15 URLs if possible."
     )
     try:
         msg = client.messages.create(
