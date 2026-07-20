@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -39,6 +40,50 @@ _REPOSTED_RE = re.compile(r"\breposted\b", re.IGNORECASE)
 _CLOSED_RE = re.compile(r"no longer accepting applications", re.IGNORECASE)
 
 # Applicant patterns, most specific first.
+_STOPWORDS = {
+    "the", "a", "an", "of", "at", "in", "on", "for", "to", "and", "or",
+    "with", "as", "by", "sr", "jr", "senior", "junior",
+}
+_LINKEDIN_SLUG_RE = re.compile(r"/jobs/view/([a-z0-9\-]+)-\d+", re.IGNORECASE)
+
+
+def _significant_words(text: str) -> set[str]:
+    """Return content words (lowercase, ≥3 chars, not stopwords) from a string."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {w for w in words if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _slug_match_score(url: str, title: str, company: str) -> float:
+    """0..1 Jaccard similarity between the slug's title-portion and the target title.
+
+    Jaccard = |intersection| / |union|, computed over the significant (non-stopword,
+    non-company) words. Using recall-only overlap accepts slugs that add extra topics
+    the target doesn't have (e.g. "manager-customer-lifecycle-marketing-at-benepass"
+    scores 2/3=0.67 for target "Manager, Customer Success" — the "lifecycle" and
+    "marketing" extras should penalize it). Jaccard drops that to 2/5=0.4.
+
+    Company must appear in the slug — else score is 0 (protects against picking a
+    same-title role at a different company).
+    """
+    m = _LINKEDIN_SLUG_RE.search(url)
+    if not m:
+        return 0.0
+    slug_all = set(re.findall(r"[a-z0-9]+", m.group(1).lower()))
+    title_words = _significant_words(title)
+    company_words = _significant_words(company)
+    if not title_words:
+        return 0.0
+    if company_words and not (company_words & slug_all):
+        return 0.0
+    # Compare only the "role" portion of the slug — strip the company and stopwords.
+    slug_role = {w for w in slug_all if w not in company_words and w not in _STOPWORDS and len(w) > 2}
+    if not slug_role:
+        return 0.0
+    intersection = title_words & slug_role
+    union = title_words | slug_role
+    return len(intersection) / len(union) if union else 0.0
+
+
 _APPLICANT_PATTERNS = [
     re.compile(r"over\s+(\d[\d,]*)\s+(?:people\s+)?applicants?", re.IGNORECASE),
     re.compile(r"(\d[\d,]*)\+\s+applicants?", re.IGNORECASE),
@@ -74,7 +119,10 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
             "TAVILY_API_KEY is not set. Add it to your environment to enable market checks."
         )
 
-    query = f'"{title}" "{company}" hiring'
+    # Punctuation in the title doesn't survive LinkedIn's slugification, and quoting the
+    # whole phrase tanks recall. Send the cleaned title + quoted company + "hiring" instead.
+    clean_title = re.sub(r"[^\w\s]", " ", title)
+    query = f'{clean_title} "{company}" hiring'
     try:
         r = httpx.post(
             "https://api.tavily.com/search",
@@ -82,7 +130,7 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
                 "api_key": key,
                 "query": query,
                 "search_depth": "advanced",
-                "max_results": 5,
+                "max_results": 10,
                 "include_answer": False,
                 "include_domains": ["linkedin.com"],
             },
@@ -101,15 +149,28 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
     data = r.json()
     results = data.get("results") or []
 
-    # Extract ONLY from the exact-match /jobs/view/ snippet. Other Tavily results are usually
-    # different Ashby/Greenhouse roles, and their "4 days ago" / "200+ applicants" hints do
-    # NOT belong to this job — mixing them in produces confidently-wrong attribution.
-    job_view = next((r for r in results if "/jobs/view/" in (r.get("url") or "")), None)
-    fallback = results[0] if results else None
-    top = job_view or fallback
+    # Score every /jobs/view/ URL by how well its slug matches the target title+company.
+    # Only accept the best match if it clears a threshold — otherwise Tavily surfaced a
+    # different-role-same-company posting (or the wrong company entirely), which we should
+    # NOT pin to this job. Threshold of 0.5 = at least half the significant title words
+    # must appear in the URL slug.
+    view_results = [r for r in results if "/jobs/view/" in (r.get("url") or "")]
+    scored = sorted(
+        ((r, _slug_match_score(r.get("url") or "", title, company)) for r in view_results),
+        key=lambda p: p[1], reverse=True,
+    )
+    best_view, best_score = (scored[0] if scored else (None, 0.0))
+    accepted = best_view if best_score >= 0.5 else None
 
-    linkedin_url = (top or {}).get("url")
-    scoped = (job_view or {}).get("content", "") or ""
+    # Only surface a LinkedIn URL when the slug is a real match for THIS job. If nothing
+    # scores above threshold, give the user a LinkedIn search URL instead of a plausible-
+    # looking but wrong /jobs/view/ link.
+    if accepted is not None:
+        linkedin_url = accepted.get("url")
+    else:
+        search_terms = quote_plus(f"{title} {company}")
+        linkedin_url = f"https://www.linkedin.com/jobs/search/?keywords={search_terms}"
+    scoped = (accepted or {}).get("content", "") or ""
 
     age = _extract_age(scoped)
     applicants = _extract_applicants(scoped)
@@ -118,10 +179,10 @@ def market_check(*, title: str, company: str) -> MarketCheckResult:
 
     if not results:
         summary = "Posted: not found on LinkedIn\nApplicants: —"
-    elif job_view is None:
-        # Have some LinkedIn presence but no canonical job posting — usually a personal
-        # post or company page. Report honestly rather than guessing.
-        summary = "Posted: no LinkedIn job posting found\nApplicants: —"
+    elif accepted is None:
+        # We got LinkedIn hits but none of the /jobs/view/ URLs match this title strongly
+        # enough. Rather than mis-attribute a different Benepass/Ashby role, say so honestly.
+        summary = "Posted: no matching LinkedIn posting\nApplicants: —"
     else:
         posted_line = f"Posted: {age or 'unknown'}"
         if reposted:
