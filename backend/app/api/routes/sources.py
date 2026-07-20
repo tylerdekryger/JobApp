@@ -61,7 +61,12 @@ def create_source(payload: SourceCreateRequest, db: Session = Depends(get_db)) -
     if existing_source is not None:
         return existing_source
 
-    company_name = payload.company_name or detected.source_identifier.replace("-", " ").title()
+    # Workday's source_identifier is a composite "tenant||host||site". Use just the
+    # tenant part for a human display name; other providers already have a bare token.
+    display_token = detected.source_identifier
+    if detected.provider == "workday" and "||" in display_token:
+        display_token = display_token.split("||", 1)[0]
+    company_name = payload.company_name or display_token.replace("-", " ").replace("_", " ").title()
     company = db.scalar(select(Company).where(Company.name == company_name))
     if company is None:
         company = Company(name=company_name)
