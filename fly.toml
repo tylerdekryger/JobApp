@@ -1,0 +1,32 @@
+# Fly.io config for the job-intel backend.
+# The frontend deploys separately to Vercel and points at this app's URL.
+
+app = "job-intel-tyler"   # you may need to change this if the name is taken
+primary_region = "iad"    # US East. Change to a closer region if you like.
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Run Alembic migrations before each new version starts serving traffic.
+[deploy]
+  release_command = "sh -c 'cd backend && alembic upgrade head'"
+
+[env]
+  # Anything here is public in `fly config show`. Real secrets live in `fly secrets`.
+  PYTHONUNBUFFERED = "1"
+  LOG_LEVEL = "INFO"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false   # keep the scheduler running for auto-sync + digest
+  auto_start_machines = true
+  min_machines_running = 1     # one always-on machine so the cron actually fires
+
+# Free tier: shared-cpu-1x with 256MB is enough for our load; bump to 512MB if
+# migrations or Workday's paginated syncs OOM.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

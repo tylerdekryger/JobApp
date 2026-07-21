@@ -1,0 +1,19 @@
+# Everything except the backend + workers is irrelevant to the image.
+frontend/
+node_modules/
+.next/
+.git/
+.venv/
+scratchpad/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.env
+.env.*
+!.env.example
+tests/
+docs/
+README.md
+docker-compose.yml
+infrastructure/

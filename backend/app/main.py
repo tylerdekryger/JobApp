@@ -21,7 +21,8 @@ def _on_startup() -> None:
 def _on_shutdown() -> None:
     stop_scheduler()
 
-# Local-dev CORS: default to any localhost port; override via CORS_ORIGINS (comma-separated) in production.
+# CORS: allow localhost (dev) + Vercel preview/prod URLs (deployed). Override with the
+# CORS_ORIGINS env var (comma-separated) if you need to lock this down further.
 _env_origins = os.getenv("CORS_ORIGINS", "").strip()
 if _env_origins:
     app.add_middleware(
@@ -33,7 +34,10 @@ if _env_origins:
 else:
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_origin_regex=(
+            r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+            r"|^https://[a-zA-Z0-9\-]+\.vercel\.app$"
+        ),
         allow_methods=["*"],
         allow_headers=["*"],
     )
