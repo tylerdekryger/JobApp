@@ -103,12 +103,12 @@ def start_scheduler() -> None:
         max_instances=1,
         coalesce=True,
     )
-    # Business-hours cron for discovery: Mon-Fri, 08:00-18:00 ET, every 2 hours.
-    # Fires at 8, 10, 12, 14, 16, 18 local time. Uses America/New_York so it tracks
-    # EDT/EST transitions automatically.
+    # Weekly discovery cron: Monday 08:00 ET. Previously ran 30x/week which burned
+    # through Tavily's 1,000/month free tier. One run/week (~4/month) leaves plenty
+    # of budget for user-triggered "Market check" clicks.
     discover_trigger = CronTrigger(
-        day_of_week="mon-fri",
-        hour="8-18/2",
+        day_of_week="mon",
+        hour=8,
         minute=0,
         timezone="America/New_York",
     )
@@ -137,7 +137,7 @@ def start_scheduler() -> None:
     )
 
     logger.info(
-        "scheduler started — auto-sync every %d min; auto-discover Mon-Fri 08:00-18:00 ET / 2h; "
+        "scheduler started — auto-sync every %d min; auto-discover Mon 08:00 ET (weekly); "
         "daily-digest Mon-Fri %02d:00 ET",
         sync_minutes, digest_hour,
     )

@@ -236,6 +236,14 @@ def run_auto_discover() -> DiscoverStats:
     """One rotation-step: search, validate, filter by size, add new boards, sync each."""
     stats = DiscoverStats(query=_pick_query())
 
+    # Kill-switch: DISABLE_AUTO_DISCOVER=1 skips all searches. Handy when your search
+    # provider budget is tight — the per-row "Market check" button still works because
+    # it hits Tavily directly, not through this task.
+    if os.getenv("DISABLE_AUTO_DISCOVER", "").strip().lower() in {"1", "true", "yes"}:
+        stats.skipped = "DISABLE_AUTO_DISCOVER is set"
+        logger.info("auto-discover skipped — %s", stats.skipped)
+        return stats
+
     has_tavily = bool(os.getenv("TAVILY_API_KEY", "").strip())
     has_gemini = bool(os.getenv("GEMINI_API_KEY", "").strip())
     has_anthropic = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
